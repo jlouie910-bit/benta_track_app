@@ -1,0 +1,51 @@
+name: benta_track_app
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  google_mlkit_barcode_scanning: ^0.14.2
+  google_mlkit_object_detection: ^0.15.1
+  font_awesome_flutter: ^11.0.0
+  fl_chart: ^0.66.0
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  firebase_core: ^4.6.0
+  firebase_auth: ^6.3.0
+  google_sign_in: ^6.2.1
+  flutter_facebook_auth: ^7.0.1
+  intl: ^0.19.0
+  cloud_firestore: ^6.2.0
+  http: ^1.1.0
+  url_launcher: ^6.3.1
+  shared_preferences: ^2.2.0
+  flutter_launcher_icons: ^0.13.1
+  cupertino_icons: ^1.0.8
+  google_generative_ai: ^0.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+  # This section registers your logo so the LoginScreen can load it
+  assets:
+    - assets/benta_track_logo.png
+
+# This section must be at the far left margin (no spaces)
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/benta_track_logo.png"
+  adaptive_icon_background: "#1E3A5F"
+  adaptive_icon_foreground: "assets/benta_track_logo.png"
+  remove_alpha_ios: true

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "807421237022",
+    "project_id": "bentatrackapp",
+    "storage_bucket": "bentatrackapp.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:807421237022:android:957de37ad270af8fc31b0f",
+        "android_client_info": {
+          "package_name": "com.example.benta_track_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDYJVOUTT_uqCA4gOaWp5JGK0MBJ9mYmxA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
