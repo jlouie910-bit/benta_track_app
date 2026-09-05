@@ -112,8 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   Hero(
                     tag: 'app_logo',
                     child: Image.asset(
-                      'assets/benta_track_logo.png',
-                      height: 120,
+                      'assets/benta_track_logo.png', height: 120,
                     ),
                   ),
                   const SizedBox(height: 10),
