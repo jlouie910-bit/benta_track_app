@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
@@ -8,9 +9,11 @@ import 'dart:math';
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
   String? _generatedOtp;
-  // --- 1. OTP & REGISTRATION
+
+  // --- 1. OTP & REGISTRATION ---
   Future<bool> sendOtpToEmail(String email) async {
     _generatedOtp = (Random().nextInt(900000) + 100000).toString();
     debugPrint("BentaTrack OTP: $_generatedOtp");
@@ -60,10 +63,21 @@ class AuthService {
 
   Future<UserCredential> signUpWithEmail(String email, String password) async {
     try {
-      UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+      UserCredential userCredential =
+          await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
+
+      if (userCredential.user != null) {
+        await _firestore.collection('Users').doc(userCredential.user!.uid).set({
+          'email': email,
+          'ownerName': userCredential.user!.displayName ?? '',
+          'setupComplete': false,
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
       return userCredential;
     } on FirebaseAuthException catch (e) {
       if (e.code == 'email-already-in-use') {
@@ -75,11 +89,12 @@ class AuthService {
     }
   }
 
-  //  LOGIN & SOCIAL
+  // --- LOGIN & SOCIAL ---
 
   Future<UserCredential?> login(String email, String password) async {
     try {
-      return await _auth.signInWithEmailAndPassword(email: email, password: password);
+      return await _auth.signInWithEmailAndPassword(
+          email: email, password: password);
     } catch (e) {
       debugPrint("Login Error: $e");
       return null;
@@ -88,16 +103,39 @@ class AuthService {
 
   Future<UserCredential?> signInWithGoogle() async {
     try {
+      // Force account selection prompt
+      await _googleSignIn.signOut();
+      
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
       if (googleUser == null) return null;
 
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
+
       final OAuthCredential credential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
 
-      return await _auth.signInWithCredential(credential);
+      UserCredential userCredential =
+          await _auth.signInWithCredential(credential);
+
+      if (userCredential.user != null) {
+        final docRef =
+            _firestore.collection('Users').doc(userCredential.user!.uid);
+        final doc = await docRef.get();
+
+        if (!doc.exists) {
+          await docRef.set({
+            'email': userCredential.user!.email ?? '',
+            'ownerName': userCredential.user!.displayName ?? '',
+            'setupComplete': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+        }
+      }
+
+      return userCredential;
     } catch (e) {
       debugPrint("Google Sign-In Error: $e");
       return null;
@@ -108,8 +146,28 @@ class AuthService {
     try {
       final LoginResult result = await FacebookAuth.instance.login();
       if (result.status == LoginStatus.success) {
-        final OAuthCredential credential = FacebookAuthProvider.credential(result.accessToken!.tokenString);
-        return await _auth.signInWithCredential(credential);
+        final OAuthCredential credential = FacebookAuthProvider.credential(
+            result.accessToken!.tokenString);
+
+        UserCredential userCredential =
+            await _auth.signInWithCredential(credential);
+
+        if (userCredential.user != null) {
+          final docRef =
+              _firestore.collection('Users').doc(userCredential.user!.uid);
+          final doc = await docRef.get();
+
+          if (!doc.exists) {
+            await docRef.set({
+              'email': userCredential.user!.email ?? '',
+              'ownerName': userCredential.user!.displayName ?? '',
+              'setupComplete': false,
+              'createdAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+          }
+        }
+
+        return userCredential;
       }
       return null;
     } catch (e) {
@@ -120,6 +178,9 @@ class AuthService {
 
   Future<void> signOut() async {
     await _auth.signOut();
-    await _googleSignIn.signOut();
+    try {
+      await _googleSignIn.signOut();
+      await FacebookAuth.instance.logOut();
+    } catch (_) {}
   }
 }

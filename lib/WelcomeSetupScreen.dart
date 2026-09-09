@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'navigation.dart';// Ensure this filename matches your dashboard file exactly
+import 'navigation.dart';
 
 class WelcomeSetupScreen extends StatefulWidget {
   const WelcomeSetupScreen({super.key});
@@ -16,6 +16,9 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
   String _selectedCategory = 'Retail';
   bool _isLoading = false;
 
+  final Color navyBlue = const Color(0xFF1E3A5F);
+  final Color tealAccent = const Color(0xFF4FD1C5);
+
   final List<String> _categories = [
     'Retail',
     'Food & Beverage',
@@ -24,37 +27,53 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
     'Others'
   ];
 
-  // Inside WelcomeSetupScreen.dart
+  @override
+  void dispose() {
+    _storeNameController.dispose();
+    super.dispose();
+  }
 
-  void _completeSetup() async {
+  Future<void> _completeSetup() async {
     final user = FirebaseAuth.instance.currentUser;
 
     if (_formKey.currentState!.validate() && user != null) {
       setState(() => _isLoading = true);
 
       try {
-        // 1. Create the user document in Firestore
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'storeName': _storeNameController.text,
-          'category': _selectedCategory,
-          'setupComplete': true,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+        final storeName = _storeNameController.text.trim();
 
-        if (mounted) {
-          // 2. Navigate to MainNavigation (the shell with the bottom bar)
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (context) => const MainNavigation()),
-          );
-        }
+        // 1. Update Firebase Auth Display Name
+        await user.updateDisplayName(storeName);
+        await user.reload();
+
+        // 2. Save store information to Firestore 'Users' collection with explicit write confirmation
+        await FirebaseFirestore.instance.collection('Users').doc(user.uid).set({
+          'storeName': storeName,
+          'category': _selectedCategory,
+          'email': user.email ?? '',
+          'ownerName': storeName,
+          'setupComplete': true,
+          'updatedAt': FieldValue.serverTimestamp(),
+          'createdAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+
+        if (!mounted) return;
+
+        // 3. Clear navigation stack and go directly to MainNavigation
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const MainNavigation()),
+          (route) => false,
+        );
       } catch (e) {
-        if (mounted) {
-          setState(() => _isLoading = false);
-          // This captures the 'permission-denied' error you saw
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Error saving profile: $e")),
-          );
-        }
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Error saving profile: $e"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
       }
     }
   }
@@ -72,43 +91,74 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                    "Welcome! 👋",
-                    style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)
+                  "Welcome! 👋",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                    "Let's set up your business profile.",
-                    style: TextStyle(color: Colors.white70, fontSize: 16)
+                  "Let's set up your business profile.",
+                  style: TextStyle(color: Colors.white70, fontSize: 16),
                 ),
                 const SizedBox(height: 40),
 
-                const Text("Store Name", style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                Text(
+                  "Store Name",
+                  style: TextStyle(
+                    color: tealAccent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 TextFormField(
                   controller: _storeNameController,
                   style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    hintText: "Enter your shop name",
-                    hintStyle: TextStyle(color: Colors.white24),
-                    enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
-                    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.cyanAccent)),
+                  decoration: InputDecoration(
+                    hintText: "Enter your shop name", 
+                    hintStyle: const TextStyle(color: Colors.white24),
+                    enabledBorder: const UnderlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white24),
+                    ),
+                    focusedBorder: UnderlineInputBorder(
+                      borderSide: BorderSide(color: tealAccent),
+                    ),
                   ),
-                  validator: (value) => value!.isEmpty ? "Please enter a name" : null,
+                  validator: (value) =>
+                      (value == null || value.trim().isEmpty)
+                          ? "Please enter a name"
+                          : null,
                 ),
 
                 const SizedBox(height: 30),
 
-                const Text("Type of Store", style: TextStyle(color: Colors.cyanAccent, fontWeight: FontWeight.bold)),
+                Text(
+                  "Type of Store",
+                  style: TextStyle(
+                    color: tealAccent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 Theme(
-                  data: Theme.of(context).copyWith(canvasColor: const Color(0xFF242526)),
+                  data: Theme.of(context).copyWith(
+                    canvasColor: const Color(0xFF242526),
+                  ),
                   child: DropdownButton<String>(
                     value: _selectedCategory,
                     isExpanded: true,
                     style: const TextStyle(color: Colors.white),
+                    dropdownColor: const Color(0xFF242526),
                     items: _categories.map((String category) {
-                      return DropdownMenuItem(value: category, child: Text(category));
+                      return DropdownMenuItem(
+                        value: category,
+                        child: Text(category),
+                      );
                     }).toList(),
                     onChanged: (newValue) {
-                      setState(() => _selectedCategory = newValue!);
+                      if (newValue != null) {
+                        setState(() => _selectedCategory = newValue);
+                      }
                     },
                   ),
                 ),
@@ -121,16 +171,28 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
                   child: ElevatedButton(
                     onPressed: _isLoading ? null : _completeSetup,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.cyanAccent,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      backgroundColor: tealAccent,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     child: _isLoading
                         ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2),
-                    )
-                        : const Text("FINISH SETUP", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(
+                              color: Colors.black,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Text(
+                            "FINISH SETUP",
+                            style: TextStyle(
+                              color: Colors.black,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
                   ),
                 ),
               ],

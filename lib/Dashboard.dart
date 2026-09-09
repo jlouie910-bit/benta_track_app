@@ -16,10 +16,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   DateTime _selectedDate = DateTime.now();
 
   Stream<int> _getLowStockCount() {
-    if (user == null) return Stream.value(0);
+    final uid = user?.uid;
+    if (uid == null) return Stream.value(0);
+
     return FirebaseFirestore.instance
-        .collection('inventory')
-        .where('userId', isEqualTo: user?.uid)
+        .collection('Inventory')
+        .where('userId', isEqualTo: uid)
         .where('status', whereIn: ['Low Stock', 'Critical'])
         .snapshots()
         .map((snapshot) => snapshot.docs.length);
@@ -50,6 +52,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final uid = user?.uid;
 
     DateTime startOfDay = DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day);
     DateTime endOfDay = startOfDay.add(const Duration(days: 1));
@@ -61,134 +64,170 @@ class _DashboardScreenState extends State<DashboardScreen> {
         backgroundColor: navyBlue,
         foregroundColor: Colors.white,
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('transactions')
-            .where('userId', isEqualTo: user?.uid)
-            .orderBy('timestamp', descending: true)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          double totalBenta = 0;
-          double totalTubo = 0;
-          int transactionCount = 0;
-          List<QueryDocumentSnapshot> filteredDocs = [];
-
-          for (var doc in snapshot.data?.docs ?? []) {
-            var data = doc.data() as Map<String, dynamic>;
-            DateTime txDate = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
-
-            if (txDate.isAfter(startOfDay) && txDate.isBefore(endOfDay)) {
-              totalBenta += (data['totalAmount'] ?? 0.0);
-              transactionCount++;
-              filteredDocs.add(doc);
-
-              List items = data['items'] ?? [];
-              for (var item in items) {
-                double price = (item['price'] ?? 0.0).toDouble();
-                double cost = (item['cost'] ?? 0.0).toDouble();
-                int qty = (item['quantity'] ?? 0).toInt();
-                totalTubo += (price - cost) * qty;
-              }
-            }
-          }
-
-          double avgSale = transactionCount > 0 ? (totalBenta / transactionCount) : 0.0;
-
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Column(
-                    children: [
-                      Text(
-                        _selectedDate.day == DateTime.now().day ? "Today's Summary" : "Daily Summary",
-                        style: const TextStyle(color: Colors.grey),
+      body: uid == null
+          ? const Center(child: Text("User not logged in."))
+          : StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('transactions')
+                  .where('userId', isEqualTo: uid)
+                  .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay))
+                  .where('timestamp', isLessThan: Timestamp.fromDate(endOfDay))
+                  .orderBy('timestamp', descending: true)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
+                          const SizedBox(height: 12),
+                          const Text(
+                            "Firestore Index or Permission Error",
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            "Ensure the document contains 'userId' and click the URL in your debug console to generate any required index.\n\nDetails: ${snapshot.error}",
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Colors.grey, fontSize: 12),
+                          ),
+                        ],
                       ),
-                      Text(DateFormat('MMMM d, yyyy').format(_selectedDate),
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    ),
+                  );
+                }
+
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final docs = snapshot.data?.docs ?? [];
+                double totalBenta = 0;
+                double totalTubo = 0;
+                int transactionCount = docs.length;
+
+                for (var doc in docs) {
+                  var data = doc.data() as Map<String, dynamic>;
+                  
+                  // Safe num conversion (handles both int and double from Firestore)
+                  totalBenta += (data['totalAmount'] ?? 0).toDouble();
+
+                  // Calculate Tubo directly if stored, or fallback to item calculation
+                  if (data.containsKey('profit') && data['profit'] != null) {
+                    totalTubo += (data['profit'] ?? 0).toDouble();
+                  } else {
+                    List items = data['items'] ?? [];
+                    for (var item in items) {
+                      double price = (item['price'] ?? 0).toDouble();
+                      double cost = (item['cost'] ?? 0).toDouble();
+                      int qty = (item['quantity'] ?? 0).toInt();
+                      totalTubo += (price - cost) * qty;
+                    }
+                  }
+                }
+
+                double avgSale = transactionCount > 0 ? (totalBenta / transactionCount) : 0.0;
+
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Column(
+                          children: [
+                            Text(
+                              _selectedDate.day == DateTime.now().day &&
+                                      _selectedDate.month == DateTime.now().month &&
+                                      _selectedDate.year == DateTime.now().year
+                                  ? "Today's Summary"
+                                  : "Daily Summary",
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                            Text(
+                              DateFormat('MMMM d, yyyy').format(_selectedDate),
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 25),
+
+                      GestureDetector(
+                        onTap: () => _selectDate(context),
+                        child: _buildSummaryCard(
+                          title: "Total Benta (Sales)",
+                          value: "₱${totalBenta.toStringAsFixed(2)}",
+                          icon: Icons.calendar_month_outlined,
+                          isDark: isDark,
+                        ),
+                      ),
+
+                      const SizedBox(height: 15),
+
+                      _buildSummaryCard(
+                        title: "Total Tubo (Profit)",
+                        value: "₱${totalTubo.toStringAsFixed(2)}",
+                        icon: Icons.trending_up,
+                        isDark: isDark,
+                        isProfit: true,
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _buildSmallStat(transactionCount.toString(), "Transactions", isDark),
+                          _buildSmallStat("₱${avgSale.toStringAsFixed(0)}", "Avg. Sale", isDark),
+
+                          StreamBuilder<int>(
+                            stream: _getLowStockCount(),
+                            builder: (context, lowStockSnapshot) {
+                              int count = lowStockSnapshot.data ?? 0;
+                              return _buildSmallStat(
+                                count.toString(),
+                                "Low Stock",
+                                isDark,
+                                valueColor: count > 0 ? Colors.redAccent : null,
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 30),
+                      const Text("Transactions for this Day", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 10),
+
+                      docs.isEmpty
+                          ? const Padding(
+                              padding: EdgeInsets.only(top: 20),
+                              child: Center(child: Text("No transactions on this date", style: TextStyle(color: Colors.grey))),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: docs.length,
+                              itemBuilder: (context, index) {
+                                var data = docs[index].data() as Map<String, dynamic>;
+                                List items = data['items'] ?? [];
+                                String displayName = items.isNotEmpty ? (items[0]['name'] ?? "Transaction") : "Transaction";
+                                if (items.length > 1) displayName += " +${items.length - 1} more";
+
+                                DateTime dt = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+
+                                return _buildTransactionItem(context, displayName, dt, (data['totalAmount'] ?? 0).toDouble());
+                              },
+                            ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 25),
-
-                GestureDetector(
-                  onTap: () => _selectDate(context),
-                  child: _buildSummaryCard(
-                    title: "Total Benta (Sales)",
-                    value: "₱${totalBenta.toStringAsFixed(2)}",
-                    icon: Icons.calendar_month_outlined,
-                    isDark: isDark,
-                  ),
-                ),
-
-                const SizedBox(height: 15),
-
-                _buildSummaryCard(
-                  title: "Total Tubo (Profit)",
-                  value: "₱${totalTubo.toStringAsFixed(2)}",
-                  icon: Icons.trending_up,
-                  isDark: isDark,
-                  isProfit: true,
-                ),
-
-                const SizedBox(height: 20),
-
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _buildSmallStat(transactionCount.toString(), "Transactions", isDark),
-                    _buildSmallStat("₱${avgSale.toStringAsFixed(0)}", "Avg. Sale", isDark),
-
-                    StreamBuilder<int>(
-                      stream: _getLowStockCount(),
-                      builder: (context, lowStockSnapshot) {
-                        int count = lowStockSnapshot.data ?? 0;
-                        return _buildSmallStat(
-                          count.toString(),
-                          "Low Stock",
-                          isDark,
-                          valueColor: count > 0 ? Colors.redAccent : null,
-                        );
-                      },
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 30),
-                const Text("Transactions for this Day", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 10),
-
-                filteredDocs.isEmpty
-                    ? const Padding(
-                  padding: EdgeInsets.only(top: 20),
-                  child: Center(child: Text("No transactions on this date", style: TextStyle(color: Colors.grey))),
-                )
-                    : ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: filteredDocs.length,
-                  itemBuilder: (context, index) {
-                    var data = filteredDocs[index].data() as Map<String, dynamic>;
-                    List items = data['items'] ?? [];
-                    String displayName = items.isNotEmpty ? items[0]['name'] : "Transaction";
-                    if (items.length > 1) displayName += " +${items.length - 1} more";
-
-                    DateTime dt = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
-
-                    return _buildTransactionItem(context, displayName, dt, (data['totalAmount'] ?? 0.0).toDouble());
-                  },
-                ),
-              ],
+                );
+              },
             ),
-          );
-        },
-      ),
     );
   }
 
@@ -207,11 +246,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(title, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-              Text(value, style: TextStyle(
+              Text(
+                value,
+                style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: isProfit ? Colors.green : (isDark ? Colors.white : navyBlue)
-              )),
+                  color: isProfit ? Colors.green : (isDark ? Colors.white : navyBlue),
+                ),
+              ),
             ],
           ),
           const Spacer(),
@@ -231,11 +273,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       child: Column(
         children: [
-          Text(value, style: TextStyle(
+          Text(
+            value,
+            style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
-              color: valueColor ?? (isDark ? Colors.white : Colors.black)
-          )),
+              color: valueColor ?? (isDark ? Colors.white : Colors.black),
+            ),
+          ),
           Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey)),
         ],
       ),

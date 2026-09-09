@@ -37,7 +37,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           .get();
 
       final invSnapshot = await FirebaseFirestore.instance
-          .collection('products')
+          .collection('Inventory')
           .where('userId', isEqualTo: uid)
           .get();
 
@@ -75,6 +75,76 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     } else {
       return DateTime(now.year, 1, 1);
     }
+  }
+
+  void _showFullItemListModal(String title, List<QueryDocumentSnapshot> sortedDocs, bool isFastMover, bool isDark) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.6,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1C1C1E) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          children: [
+            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[400], borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 15),
+            Text(title, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: isDark ? Colors.white : navyBlue)),
+            const Divider(height: 25),
+            Expanded(
+              child: ListView.builder(
+                itemCount: sortedDocs.length,
+                itemBuilder: (context, index) {
+                  final data = sortedDocs[index].data() as Map<String, dynamic>;
+                  final itemName = data['itemName'] ?? 'Unknown Item';
+                  final totalSold = data['totalSold'] ?? 0;
+                  final stock = data['stock'] ?? 0;
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF2C2C2E) : Colors.grey[100],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(itemName, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: isDark ? Colors.white : Colors.black87)),
+                              const SizedBox(height: 2),
+                              Text("Stock remaining: $stock", style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: isFastMover ? Colors.green.withValues(alpha: 0.15) : Colors.orange.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            "Sold: $totalSold",
+                            style: TextStyle(fontWeight: FontWeight.bold, color: isFastMover ? Colors.green : Colors.orange, fontSize: 13),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -159,6 +229,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         ],
                       ),
                       const SizedBox(height: 24),
+                      _buildItemVelocitySection(isDark),
+                      const SizedBox(height: 24),
                       _buildHeader("Revenue Trend (Benta)", isDark),
                       _buildBarChart(bentaData, isDark),
                       const SizedBox(height: 24),
@@ -176,6 +248,120 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildItemVelocitySection(bool isDark) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('Inventory')
+          .where('userId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        var docs = List<QueryDocumentSnapshot>.from(snapshot.data!.docs);
+        docs.sort((a, b) {
+          var dataA = a.data() as Map<String, dynamic>;
+          var dataB = b.data() as Map<String, dynamic>;
+          int soldA = dataA.containsKey('totalSold') ? (dataA['totalSold'] as num).toInt() : 0;
+          int soldB = dataB.containsKey('totalSold') ? (dataB['totalSold'] as num).toInt() : 0;
+          return soldB.compareTo(soldA);
+        });
+
+        var topItem = docs.first.data() as Map<String, dynamic>;
+        var slowItem = docs.last.data() as Map<String, dynamic>;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildHeader("Product Movement Overview", isDark),
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _showFullItemListModal("Fast Movers List", docs, true, isDark),
+                    borderRadius: BorderRadius.circular(15),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.trending_up, color: Colors.green, size: 18),
+                              SizedBox(width: 5),
+                              Text("Fast Mover", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 12)),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            topItem['itemName'] ?? 'N/A',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: isDark ? Colors.white : Colors.black87),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "Sold: ${topItem['totalSold'] ?? 0} units",
+                            style: const TextStyle(color: Colors.grey, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _showFullItemListModal("Slow Movers List", docs.reversed.toList(), false, isDark),
+                    borderRadius: BorderRadius.circular(15),
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(Icons.hourglass_bottom, color: Colors.orange, size: 18),
+                              SizedBox(width: 5),
+                              Text("Slow Mover", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange, fontSize: 12)),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            slowItem['itemName'] ?? 'N/A',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: isDark ? Colors.white : Colors.black87),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            "Sold: ${slowItem['totalSold'] ?? 0} units",
+                            style: const TextStyle(color: Colors.grey, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      },
     );
   }
 

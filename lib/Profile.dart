@@ -5,7 +5,7 @@ import 'main.dart';
 import 'Profile_Settings.dart';
 import 'store_settings.dart';
 import 'terms_conditions.dart';
-import 'help_support_screen.dart'; // IMPORTED: Your new help & support file
+import 'help_support_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -35,7 +35,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
               onPressed: () async {
                 Navigator.pop(context);
                 await FirebaseAuth.instance.signOut();
-                // Ensure the app redirects to the login/auth toggle screen
               },
               child: const Text(
                 "Logout",
@@ -116,12 +115,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 85),
 
             StreamBuilder<DocumentSnapshot>(
-              stream: FirebaseFirestore.instance.collection('users').doc(user?.uid).snapshots(),
+              // FIXED: Changed collection from 'users' to 'Users'
+              stream: FirebaseFirestore.instance.collection('Users').doc(user?.uid).snapshots(),
               builder: (context, snapshot) {
                 String displayName = user?.email ?? "Store Owner";
                 if (snapshot.hasData && snapshot.data!.exists) {
-                  var data = snapshot.data!.data() as Map<String, dynamic>;
-                  displayName = data['storeName'] ?? displayName;
+                  var data = snapshot.data!.data() as Map<String, dynamic>?;
+                  if (data != null && data.containsKey('storeName')) {
+                    displayName = data['storeName'] ?? displayName;
+                  }
                 }
 
                 return Column(
@@ -219,7 +221,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     title: "Help & Support",
                     iconColor: Colors.teal,
                     onTap: () {
-                      // UPDATED: Navigates to HelpSupportScreen
                       Navigator.push(
                         context,
                         MaterialPageRoute(builder: (context) => const HelpSupportScreen()),

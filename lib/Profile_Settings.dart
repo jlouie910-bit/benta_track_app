@@ -23,7 +23,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   bool _isLoading = false;
   String? _storedMpin;
 
-  // NEW: State for password masking toggle
   bool _obscurePassword = true;
 
   static const Color navyBlue = Color(0xFF1E3A5F);
@@ -39,13 +38,13 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     _emailController.text = user?.email ?? "";
     try {
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
-          .collection('users')
+          .collection('Users') // FIXED: Changed from 'users' to 'Users'
           .doc(user?.uid)
           .get();
 
       if (userDoc.exists && mounted) {
         setState(() {
-          _storeNameController.text = userDoc['storeName'] ?? "";
+          _storeNameController.text = userDoc.data().toString().contains('storeName') ? userDoc['storeName'] ?? "" : "";
           Map<String, dynamic>? data = userDoc.data() as Map<String, dynamic>?;
           _storedMpin = data?['mpin'];
         });
@@ -194,9 +193,10 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         await user!.reauthenticateWithCredential(credential);
       }
 
-      await FirebaseFirestore.instance.collection('users').doc(user?.uid).update({
+      // FIXED: Changed collection to 'Users' and used merge set
+      await FirebaseFirestore.instance.collection('Users').doc(user?.uid).set({
         'storeName': _storeNameController.text.trim(),
-      });
+      }, SetOptions(merge: true));
 
       if (isChangingPassword) {
         await user?.updatePassword(_passwordController.text.trim());
@@ -300,13 +300,11 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   Widget _buildTextField(TextEditingController controller, IconData icon, bool isDark, {bool isPassword = false, bool isReadOnly = false}) {
     return TextFormField(
       controller: controller,
-      // If it's a password field, use the _obscurePassword state
       obscureText: isPassword ? _obscurePassword : false,
       readOnly: isReadOnly,
       style: TextStyle(color: isReadOnly ? (isDark ? Colors.white38 : Colors.black38) : (isDark ? Colors.white : Colors.black)),
       decoration: InputDecoration(
         prefixIcon: Icon(icon, color: navyBlue),
-        // Added: Suffix icon for password fields
         suffixIcon: isPassword
             ? IconButton(
           icon: Icon(

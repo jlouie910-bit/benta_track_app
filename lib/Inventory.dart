@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -34,19 +35,47 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return const Stream.empty();
 
-    Query query = FirebaseFirestore.instance
-        .collection('inventory')
-        .where('userId', isEqualTo: user.uid);
+    // Querying strictly by userId ensures high performance and avoids index overhead.
+    // Category & Status filtering are performed locally on the fetched snapshot stream.
+    return FirebaseFirestore.instance
+        .collection('Inventory')
+        .where('userId', isEqualTo: user.uid)
+        .snapshots();
+  }
 
-    if (_selectedStatusTab != 'All Items') {
-      query = query.where('status', isEqualTo: _selectedStatusTab);
+  Widget _buildProductThumbnail(String? imagePath, Widget fallbackIcon) {
+    if (imagePath == null || imagePath.isEmpty) {
+      return fallbackIcon;
     }
 
-    if (_selectedCategory != 'All Categories') {
-      query = query.where('category', isEqualTo: _selectedCategory);
+    if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          imagePath,
+          width: 50,
+          height: 50,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => fallbackIcon,
+        ),
+      );
     }
 
-    return query.orderBy('timestamp', descending: true).snapshots();
+    final file = File(imagePath);
+    if (file.existsSync()) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.file(
+          file,
+          width: 50,
+          height: 50,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => fallbackIcon,
+        ),
+      );
+    }
+
+    return fallbackIcon;
   }
 
   @override
@@ -56,8 +85,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     return Scaffold(
       backgroundColor: isDark ? fbDarkBg : const Color(0xFFF0FAFC),
       appBar: AppBar(
-        title: const Text("Inventory Stocks",
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: const Text("Inventory Stocks", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: navyBlue,
         elevation: 0,
       ),
@@ -79,7 +107,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       selected: isSelected,
                       onSelected: (_) => setState(() => _selectedStatusTab = tab),
                       selectedColor: tealAccent,
-                      backgroundColor: isDark ? Colors.white.withOpacity(0.05) : Colors.white.withOpacity(0.1),
+                      backgroundColor: isDark 
+                          ? Colors.white.withOpacity(0.05) 
+                          : Colors.white.withOpacity(0.1),
                       labelStyle: TextStyle(
                         color: isSelected ? Colors.black : (isDark ? fbTextGrey : Colors.black),
                         fontWeight: FontWeight.bold,
@@ -119,7 +149,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   child: Text(category, style: const TextStyle(fontSize: 14)),
                 );
               }).toList(),
-              onChanged: (newValue) => setState(() => _selectedCategory = newValue!),
+              onChanged: (newValue) {
+                if (newValue != null) {
+                  setState(() => _selectedCategory = newValue);
+                }
+              },
             ),
           ),
 
@@ -128,6 +162,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
             child: StreamBuilder<QuerySnapshot>(
               stream: _getInventoryStream(),
               builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(child: Text("Error fetching data: ${snapshot.error}", style: const TextStyle(color: Colors.redAccent)));
+                }
+
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
@@ -136,18 +174,47 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   return Center(child: Text("No items found", style: TextStyle(color: isDark ? fbTextGrey : Colors.grey)));
                 }
 
+                // Filter items in memory by both Category and Status
+                final docs = snapshot.data!.docs.where((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  
+                  // Category Filter
+                  if (_selectedCategory != 'All Categories') {
+                    if ((data['category'] ?? '') != _selectedCategory) {
+                      return false;
+                    }
+                  }
+
+                  // Status Filter
+                  if (_selectedStatusTab != 'All Items') {
+                    final status = data['status'] ?? 'In Stock';
+                    if (status != _selectedStatusTab) {
+                      return false;
+                    }
+                  }
+
+                  return true;
+                }).toList();
+
+                if (docs.isEmpty) {
+                  return Center(child: Text("No items match selected filters", style: TextStyle(color: isDark ? fbTextGrey : Colors.grey)));
+                }
+
                 return ListView.builder(
                   padding: const EdgeInsets.all(15),
-                  itemCount: snapshot.data!.docs.length,
+                  itemCount: docs.length,
                   itemBuilder: (context, index) {
-                    var doc = snapshot.data!.docs[index];
+                    var doc = docs[index];
                     var data = doc.data() as Map<String, dynamic>;
 
-                    double price = (data['price'] ?? 0.0).toDouble();
-                    double cost = (data['cost'] ?? 0.0).toDouble();
+                    double price = (data['price'] as num?)?.toDouble() ?? 0.0;
+                    double cost = (data['cost'] as num?)?.toDouble() ?? 0.0;
                     double margin = price - cost;
-                    int currentStock = (data['stock'] ?? 0).toInt();
+                    int currentStock = (data['stock'] as num?)?.toInt() ?? 0;
                     bool isOutOfStock = currentStock <= 0;
+                    String? imagePath = data['imagePath'] ?? data['imageUrl'];
+
+                    Widget statusIcon = _buildStatusIcon(isOutOfStock ? 'Critical' : (data['status'] ?? 'In Stock'));
 
                     return Card(
                       color: isDark ? fbCardBg : Colors.white,
@@ -161,12 +228,14 @@ class _InventoryScreenState extends State<InventoryScreen> {
                           Opacity(
                             opacity: isOutOfStock ? 0.4 : 1.0,
                             child: ListTile(
-                              leading: _buildStatusIcon(isOutOfStock ? 'Critical' : (data['status'] ?? 'In Stock')),
+                              leading: _buildProductThumbnail(imagePath, statusIcon),
                               title: Row(
                                 children: [
                                   Expanded(
-                                    child: Text(data['itemName'] ?? 'Product',
-                                        style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
+                                    child: Text(
+                                      data['itemName'] ?? 'Product',
+                                      style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black),
+                                    ),
                                   ),
                                   if (isOutOfStock)
                                     const Text("OUT OF STOCK", style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold)),
@@ -176,6 +245,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text("Stock: $currentStock | ${data['category'] ?? 'General'}", style: TextStyle(color: isDark ? fbTextGrey : Colors.black54)),
+                                  Text("Barcode: ${data['barcode'] ?? 'N/A'}", style: TextStyle(color: isDark ? tealAccent : navyBlue, fontSize: 11, fontWeight: FontWeight.w500)),
                                   Text("Capital: ₱${cost.toStringAsFixed(2)}", style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
                                 ],
                               ),
@@ -223,7 +293,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                     label: const Text("RESTOCK", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: isOutOfStock ? Colors.redAccent : tealAccent,
-                                      elevation: isOutOfStock ? 0 : 2, // Use standard elevation for normal buttons
+                                      elevation: isOutOfStock ? 0 : 2,
                                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                     ),
                                   ),

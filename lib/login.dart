@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'auth_service.dart';
 import 'Navigation.dart';
 import 'sign_up.dart';
 import 'forgot_password.dart';
 import 'terms_conditions.dart';
+import 'WelcomeSetupScreen.dart'; // Make sure this matches your welcome setup screen filename
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -17,15 +19,22 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  
   final AuthService _authService = AuthService();
 
-  final Color navyBlue = const Color(0xFF1e3a5f);
-  final Color mintGreen = const Color(0xFF6ee7b7);
-  final Color glassWhite = Colors.white.withOpacity(0.1);
+  final Color navyBlue = const Color(0xFF1E3A5F);
+  final Color mintGreen = const Color(0xFF6EE7B7);
 
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _hasAcceptedTerms = false;
+
+  @override
+  void dispose() {
+    _phoneController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   void _handleForgotPassword() {
     Navigator.push(
@@ -40,7 +49,10 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
-    if (_phoneController.text.isEmpty || _passwordController.text.isEmpty) {
+    final email = _phoneController.text.trim();
+    final password = _passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
       _showErrorSnackBar("Please fill in all fields.");
       return;
     }
@@ -48,25 +60,102 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _phoneController.text.trim(),
-        password: _passwordController.text.trim(),
-      );
+      final userCredential = await _authService.login(email, password);
 
-      if (mounted) {
-        _navigateToDashboard();
+      if (userCredential != null && userCredential.user != null && mounted) {
+        await _checkSetupAndNavigate(userCredential.user!.uid);
+      } else if (mounted) {
+        _showErrorSnackBar("Invalid email or password.");
       }
     } on FirebaseAuthException catch (e) {
-      String message = "Login failed.";
-      if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
-        message = "No account found or incorrect credentials.";
-      } else if (e.code == 'wrong-password') {
-        message = "Incorrect password. Please try again.";
+      if (!mounted) return;
+      
+      String errorMessage = "Login failed. Please try again.";
+      if (e.code == 'user-not-found' || e.code == 'wrong-password' || e.code == 'invalid-credential') {
+        errorMessage = "Incorrect email or password.";
+      } else if (e.code == 'invalid-email') {
+        errorMessage = "Please enter a valid email address.";
+      } else if (e.code == 'user-disabled') {
+        errorMessage = "This account has been disabled.";
       }
-
-      if (mounted) _showErrorSnackBar(message);
+      _showErrorSnackBar(errorMessage);
+    } catch (e) {
+      if (mounted) _showErrorSnackBar("An unexpected error occurred.");
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // Google Sign-In Handler
+  Future<void> _handleGoogleSignIn() async {
+    if (!_hasAcceptedTerms) {
+      _showErrorSnackBar("Please accept the Terms and Conditions to continue.");
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      final userCredential = await _authService.signInWithGoogle();
+      if (userCredential != null && userCredential.user != null && mounted) {
+        await _checkSetupAndNavigate(userCredential.user!.uid);
+      } else if (mounted) {
+        // User cancelled or error occurred
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showErrorSnackBar("Google Sign-In failed: $e");
+      }
+    }
+  }
+
+  // Facebook Sign-In Handler
+  Future<void> _handleFacebookSignIn() async {
+    if (!_hasAcceptedTerms) {
+      _showErrorSnackBar("Please accept the Terms and Conditions to continue.");
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      final userCredential = await _authService.signInWithFacebook();
+      if (userCredential != null && userCredential.user != null && mounted) {
+        await _checkSetupAndNavigate(userCredential.user!.uid);
+      } else if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showErrorSnackBar("Facebook Sign-In failed: $e");
+      }
+    }
+  }
+
+  // Checks if user completed setup in Firestore 'Users' collection and routes accordingly
+  Future<void> _checkSetupAndNavigate(String uid) async {
+    try {
+      final userDoc = await FirebaseFirestore.instance.collection('Users').doc(uid).get();
+      bool setupComplete = false;
+      
+      if (userDoc.exists) {
+        setupComplete = userDoc.data()?['setupComplete'] ?? false;
+      }
+
+      if (!mounted) return;
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (context) => setupComplete ? const MainNavigation() : const WelcomeSetupScreen(),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showErrorSnackBar("Error verifying profile status.");
+      }
     }
   }
 
@@ -85,94 +174,117 @@ class _LoginScreenState extends State<LoginScreen> {
     Navigator.push(context, MaterialPageRoute(builder: (context) => const SignUpScreen()));
   }
 
-  void _navigateToDashboard() {
-    Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const MainNavigation()));
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: navyBlue,
-      body: Stack(
-        children: [
-          // Background decorative element
-          Positioned(
-            top: -100,
-            right: -100,
-            child: CircleAvatar(radius: 150, backgroundColor: mintGreen.withOpacity(0.05)),
-          ),
-          SafeArea(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 30.0),
-              child: Column(
-                children: [
-                  const SizedBox(height: 50),
-
-                  // NEW: Modern Logo implementation (Replaced BT Box)
-                  Hero(
-                    tag: 'app_logo',
-                    child: Image.asset(
-                      'assets/benta_track_logo.png', height: 120,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-
-                  const Text(
-                    "BentaTrack",
-                    style: TextStyle(
-                      fontSize: 32,
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                  Text(
-                    "Inventory Management for MSE Businesses",
-                    style: TextStyle(
-                      color: mintGreen.withOpacity(0.8),
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                  const SizedBox(height: 50),
-
-                  _buildInputField("Email", Icons.email_outlined, "Enter your email", _phoneController, false),
-                  const SizedBox(height: 20),
-                  _buildInputField("Password", Icons.lock_outline, "Enter your password", _passwordController, true),
-
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: _handleForgotPassword,
-                      child: Text("Forgot Password?", style: TextStyle(color: mintGreen, fontWeight: FontWeight.w600)),
-                    ),
-                  ),
-
-                  const SizedBox(height: 10),
-                  _buildTermsCheckbox(),
-
-                  const SizedBox(height: 25),
-                  _buildLoginButton(),
-
-                  const SizedBox(height: 25),
-                  _buildSignUpOption(),
-
-                  const SizedBox(height: 40),
-                  _buildSocialLoginSection(),
-
-                  const SizedBox(height: 40),
-                  const Text("Made for Filipino MSMEs", style: TextStyle(color: Colors.white30, fontSize: 11)),
-                ],
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Scaffold(
+        backgroundColor: navyBlue,
+        body: Stack(
+          children: [
+            Positioned(
+              top: -100,
+              right: -100,
+              child: CircleAvatar(
+                radius: 150,
+                backgroundColor: mintGreen.withValues(alpha: 0.05),
               ),
             ),
-          ),
-        ],
+            SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 30.0, vertical: 20.0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 30),
+                    Hero(
+                      tag: 'app_logo',
+                      child: Image.asset(
+                        'assets/benta_track_logo.png', 
+                        height: 110,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      "BentaTrack",
+                      style: TextStyle(
+                        fontSize: 32,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    Text(
+                      "Inventory Management for MSE Businesses",
+                      style: TextStyle(
+                        color: mintGreen.withValues(alpha: 0.8),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+
+                    _buildInputField(
+                      "Email",
+                      Icons.email_outlined,
+                      "Enter your email",
+                      _phoneController,
+                      false,
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                    const SizedBox(height: 20),
+                    _buildInputField(
+                      "Password",
+                      Icons.lock_outline,
+                      "Enter your password",
+                      _passwordController,
+                      true,
+                    ),
+
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: _handleForgotPassword,
+                        child: Text(
+                          "Forgot Password?",
+                          style: TextStyle(color: mintGreen, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+                    _buildTermsCheckbox(),
+
+                    const SizedBox(height: 25),
+                    _buildLoginButton(),
+
+                    const SizedBox(height: 25),
+                    _buildSignUpOption(),
+
+                    const SizedBox(height: 35),
+                    _buildSocialLoginSection(),
+
+                    const SizedBox(height: 30),
+                    const Text("Made for Filipino MSMEs", style: TextStyle(color: Colors.white30, fontSize: 11)),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildInputField(String label, IconData icon, String hint, TextEditingController controller, bool isPassword) {
+  Widget _buildInputField(
+    String label,
+    IconData icon,
+    String hint,
+    TextEditingController controller,
+    bool isPassword, {
+    TextInputType keyboardType = TextInputType.text,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -181,16 +293,17 @@ class _LoginScreenState extends State<LoginScreen> {
         TextField(
           controller: controller,
           obscureText: isPassword ? _obscurePassword : false,
+          keyboardType: keyboardType,
           style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
             prefixIcon: Icon(icon, color: mintGreen, size: 20),
             hintText: hint,
             hintStyle: const TextStyle(color: Colors.white38),
             filled: true,
-            fillColor: Colors.white.withOpacity(0.05),
+            fillColor: Colors.white.withValues(alpha: 0.05),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(15),
-              borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+              borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(15),
@@ -198,13 +311,13 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             suffixIcon: isPassword
                 ? IconButton(
-              icon: Icon(
-                _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                color: Colors.white70,
-                size: 20,
-              ),
-              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
-            )
+                    icon: Icon(
+                      _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
+                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                  )
                 : null,
           ),
         ),
@@ -278,21 +391,23 @@ class _LoginScreenState extends State<LoginScreen> {
       children: [
         Row(
           children: [
-            Expanded(child: Divider(color: Colors.white.withOpacity(0.1))),
+            Expanded(child: Divider(color: Colors.white.withValues(alpha: 0.1))),
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 15),
               child: Text("Or continue with", style: TextStyle(color: Colors.white38, fontSize: 12)),
             ),
-            Expanded(child: Divider(color: Colors.white.withOpacity(0.1))),
+            Expanded(child: Divider(color: Colors.white.withValues(alpha: 0.1))),
           ],
         ),
-        const SizedBox(height: 25),
+        const SizedBox(height: 20),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            _socialIconButton(const FaIcon(FontAwesomeIcons.google, color: Colors.white, size: 22), () {}),
+            // Connected Google Sign-In Button
+            _socialIconButton(const FaIcon(FontAwesomeIcons.google, color: Colors.white, size: 22), _handleGoogleSignIn),
             const SizedBox(width: 20),
-            _socialIconButton(const FaIcon(FontAwesomeIcons.facebook, color: Color(0xFF1877F2), size: 22), () {}),
+            // Connected Facebook Sign-In Button
+            _socialIconButton(const FaIcon(FontAwesomeIcons.facebook, color: Color(0xFF1877F2), size: 22), _handleFacebookSignIn),
           ],
         ),
       ],
@@ -301,15 +416,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Widget _socialIconButton(Widget icon, VoidCallback onTap) {
     return InkWell(
-      onTap: onTap,
+      onTap: _isLoading ? null : onTap,
       borderRadius: BorderRadius.circular(15),
       child: Container(
         height: 55,
         width: 80,
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.05),
+          color: Colors.white.withValues(alpha: 0.05),
           borderRadius: BorderRadius.circular(15),
-          border: Border.all(color: Colors.white.withOpacity(0.1)),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
         ),
         child: Center(child: icon),
       ),

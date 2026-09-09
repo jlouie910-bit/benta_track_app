@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'auth_service.dart';
 import 'package:flutter/services.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'auth_service.dart';
 import 'terms_conditions.dart';
 
 class SignUpScreen extends StatefulWidget {
@@ -40,7 +42,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
         builder: (context, setPopupState) => Container(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-            top: 20, left: 30, right: 30,
+            top: 20,
+            left: 30,
+            right: 30,
           ),
           decoration: BoxDecoration(
             color: navyBlue,
@@ -51,7 +55,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
             children: [
               const Text(
                 "Verify Your Account",
-                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
               const Text(
@@ -65,7 +72,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   padding: const EdgeInsets.only(top: 15),
                   child: Text(
                     _otpErrorMessage!,
-                    style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                        color: Colors.redAccent, fontWeight: FontWeight.bold),
                   ),
                 ),
 
@@ -113,32 +121,60 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () async {
                     if (otpController.text.length < 6) {
-                      setPopupState(() => _otpErrorMessage = "Please enter all 6 digits.");
+                      setPopupState(() =>
+                          _otpErrorMessage = "Please enter all 6 digits.");
                       return;
                     }
 
                     if (_authService.verifyOtp(otpController.text)) {
                       try {
-                        await _authService.signUpWithEmail(email, password);
+                        // 1. Authenticate with Firebase
+                        dynamic result = await _authService.signUpWithEmail(email, password);
+                        
+                        // Extract User credential safely
+                        User? user;
+                        if (result is UserCredential) {
+                          user = result.user;
+                        } else if (result is User) {
+                          user = result;
+                        } else {
+                          user = FirebaseAuth.instance.currentUser;
+                        }
+
+                        // 2. Write initial profile record in 'Users' collection
+                        if (user != null) {
+                          await FirebaseFirestore.instance
+                              .collection('Users')
+                              .doc(user.uid)
+                              .set({
+                            'email': email,
+                            'setupComplete': false, // Triggers WelcomeSetupScreen in main.dart
+                            'createdAt': FieldValue.serverTimestamp(),
+                          }, SetOptions(merge: true));
+                        }
 
                         if (mounted) {
-                          Navigator.of(context).pop();
+                          Navigator.of(context).pop(); // Close bottom sheet
+                          Navigator.of(context).pop(); // Exit SignUpScreen
                           _showSnackBar("Verified and Registered Successfully!", Colors.green);
                         }
                       } catch (e) {
                         setPopupState(() => _otpErrorMessage = e.toString());
                       }
                     } else {
-                      setPopupState(() => _otpErrorMessage = "Invalid code. Try again.");
+                      setPopupState(() =>
+                          _otpErrorMessage = "Invalid code. Try again.");
                     }
                   },
                   child: Text(
                     "VERIFY NOW",
-                    style: TextStyle(color: navyBlue, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                        color: navyBlue, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
@@ -150,9 +186,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   Future<void> _handleSignUp() async {
-    // Constraint: Validates checkbox status before proceeding
     if (!_hasAcceptedTerms) {
-      _showSnackBar("Please accept the Terms & Conditions to continue.", Colors.redAccent);
+      _showSnackBar(
+          "Please accept the Terms & Conditions to continue.", Colors.redAccent);
       return;
     }
 
@@ -169,7 +205,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
     setState(() => _isLoading = true);
 
     try {
-      bool isSent = await _authService.sendOtpToEmail(_emailController.text.trim());
+      bool isSent =
+          await _authService.sendOtpToEmail(_emailController.text.trim());
 
       if (isSent) {
         if (mounted) {
@@ -194,7 +231,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: color, behavior: SnackBarBehavior.floating),
+      SnackBar(
+          content: Text(message),
+          backgroundColor: color,
+          behavior: SnackBarBehavior.floating),
     );
   }
 
@@ -216,7 +256,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
           children: [
             const SizedBox(height: 40),
             const Text("Create Account",
-                style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold)),
             const SizedBox(height: 50),
             _buildField(_emailController, "Email", Icons.email, false),
             const SizedBox(height: 20),
@@ -226,7 +269,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
               Icons.lock,
               true,
               isObscured: _obscurePassword,
-              onToggle: () => setState(() => _obscurePassword = !_obscurePassword),
+              onToggle: () =>
+                  setState(() => _obscurePassword = !_obscurePassword),
             ),
             const SizedBox(height: 20),
             _buildField(
@@ -235,12 +279,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
               Icons.lock_outline,
               true,
               isObscured: _obscureConfirmPassword,
-              onToggle: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+              onToggle: () => setState(
+                  () => _obscureConfirmPassword = !_obscureConfirmPassword),
             ),
-
             const SizedBox(height: 20),
-
-            // UI Enhancement: Highlighted and Underlined Terms Link
             Theme(
               data: ThemeData(unselectedWidgetColor: Colors.white70),
               child: CheckboxListTile(
@@ -248,19 +290,21 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 value: _hasAcceptedTerms,
                 activeColor: Colors.cyanAccent,
                 checkColor: navyBlue,
-                onChanged: (value) => setState(() => _hasAcceptedTerms = value ?? false),
+                onChanged: (value) =>
+                    setState(() => _hasAcceptedTerms = value ?? false),
                 controlAffinity: ListTileControlAffinity.leading,
                 title: GestureDetector(
                   onTap: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => const TermsConditionsScreen()),
+                      MaterialPageRoute(
+                          builder: (context) => const TermsConditionsScreen()),
                     );
                   },
                   child: RichText(
-                    text: TextSpan(
+                    text: const TextSpan(
                       text: "I accept the ",
-                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
                       children: [
                         TextSpan(
                           text: "Terms and Conditions",
@@ -276,33 +320,39 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 ),
               ),
             ),
-
             const SizedBox(height: 20),
-
             SizedBox(
               width: double.infinity,
               height: 55,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _hasAcceptedTerms ? Colors.white : Colors.white24,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                  backgroundColor:
+                      _hasAcceptedTerms ? Colors.white : Colors.white24,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30)),
                 ),
                 onPressed: _isLoading ? null : _handleSignUp,
                 child: _isLoading
                     ? CircularProgressIndicator(color: navyBlue)
-                    : Text("SIGN UP", style: TextStyle(color: navyBlue, fontWeight: FontWeight.bold)),
+                    : Text("SIGN UP",
+                        style: TextStyle(
+                            color: navyBlue, fontWeight: FontWeight.bold)),
               ),
             ),
             const SizedBox(height: 25),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Text("Already have an account? ", style: TextStyle(color: Colors.white70)),
+                const Text("Already have an account? ",
+                    style: TextStyle(color: Colors.white70)),
                 GestureDetector(
                   onTap: () => Navigator.pop(context),
                   child: const Text(
                     "Login",
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, decoration: TextDecoration.underline),
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        decoration: TextDecoration.underline),
                   ),
                 ),
               ],
@@ -314,12 +364,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   Widget _buildField(
-      TextEditingController controller,
-      String hint,
-      IconData icon,
-      bool isPass,
-      {bool isObscured = false, VoidCallback? onToggle}
-      ) {
+      TextEditingController controller, String hint, IconData icon, bool isPass,
+      {bool isObscured = false, VoidCallback? onToggle}) {
     return TextField(
       controller: controller,
       obscureText: isPass ? isObscured : false,
@@ -328,15 +374,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
         prefixIcon: Icon(icon, color: Colors.white70),
         hintText: hint,
         hintStyle: const TextStyle(color: Colors.white54),
-        enabledBorder: const UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+        enabledBorder: const UnderlineInputBorder(
+            borderSide: BorderSide(color: Colors.white24)),
         suffixIcon: isPass
             ? IconButton(
-          icon: Icon(
-            isObscured ? Icons.visibility_off : Icons.visibility,
-            color: Colors.white70,
-          ),
-          onPressed: onToggle,
-        )
+                icon: Icon(
+                  isObscured ? Icons.visibility_off : Icons.visibility,
+                  color: Colors.white70,
+                ),
+                onPressed: onToggle,
+              )
             : null,
       ),
     );

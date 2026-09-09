@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:intl/intl.dart'; // Add this for date formatting
+import 'Camera.dart';
 
 class NewSalesScreen extends StatefulWidget {
   const NewSalesScreen({super.key});
@@ -13,7 +13,6 @@ class NewSalesScreen extends StatefulWidget {
 class _NewSalesScreenState extends State<NewSalesScreen> {
   final Color navyBlue = const Color(0xFF1E3A5F);
   final User? user = FirebaseAuth.instance.currentUser;
-  final SearchController _searchController = SearchController();
 
   final List<Map<String, dynamic>> _cartItems = [];
   double _totalAmount = 0.0;
@@ -26,23 +25,17 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     setState(() => _totalAmount = total);
   }
 
-  void _addItemToCart(String id, String name, double price, double cost, int stock) {
-    if (stock <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Item out of stock!"), backgroundColor: Colors.orange),
-      );
-      return;
-    }
+  void _addItemToCart(String id, String name, double price, double cost, int stock, int quantityToAdd) {
+    if (stock <= 0 || quantityToAdd <= 0) return;
 
     setState(() {
       int index = _cartItems.indexWhere((item) => item['id'] == id);
       if (index != -1) {
-        if (_cartItems[index]['quantity'] < stock) {
-          _cartItems[index]['quantity'] += 1;
+        int newQty = _cartItems[index]['quantity'] + quantityToAdd;
+        if (newQty <= stock) {
+          _cartItems[index]['quantity'] = newQty;
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Cannot exceed available stock!")),
-          );
+          _cartItems[index]['quantity'] = stock;
         }
       } else {
         _cartItems.add({
@@ -50,7 +43,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
           'name': name,
           'price': price,
           'cost': cost,
-          'quantity': 1,
+          'quantity': quantityToAdd <= stock ? quantityToAdd : stock,
           'maxStock': stock
         });
       }
@@ -58,7 +51,261 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     });
   }
 
-  // --- NEW: RECEIPT OVERVIEW DIALOG ---
+  void _openMultiSelectSearchModal() async {
+    if (user == null) return;
+
+    final Map<String, int> tempSelectedQuantities = {};
+    String searchQuery = "";
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Container(
+          height: MediaQuery.of(context).size.height * 0.8,
+          decoration: BoxDecoration(
+            color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1C1C1E) : Colors.white,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
+          ),
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[400], borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 15),
+              const Text("Search & Select Items", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text("Type to filter database items and check quantities", style: TextStyle(color: Colors.grey, fontSize: 12)),
+              const SizedBox(height: 15),
+              TextField(
+                decoration: InputDecoration(
+                  hintText: "Search item name or barcode...",
+                  prefixIcon: const Icon(Icons.search),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                ),
+                onChanged: (val) {
+                  setModalState(() {
+                    searchQuery = val.trim().toLowerCase();
+                  });
+                },
+              ),
+              const Divider(height: 25),
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('Inventory')
+                      .where('userId', isEqualTo: user?.uid)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                      return const Center(child: Text("No items available in inventory."));
+                    }
+
+                    final docs = snapshot.data!.docs.where((doc) {
+                      final data = doc.data() as Map<String, dynamic>;
+                      final itemName = (data['itemName'] ?? '').toString().toLowerCase();
+                      final barcode = (data['barcode'] ?? '').toString().toLowerCase();
+                      if (searchQuery.isEmpty) return true;
+                      return itemName.contains(searchQuery) || barcode.contains(searchQuery);
+                    }).toList();
+
+                    if (docs.isEmpty) {
+                      return const Center(child: Text("No matching items found in database."));
+                    }
+
+                    return ListView.builder(
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        final doc = docs[index];
+                        final data = doc.data() as Map<String, dynamic>;
+                        final docId = doc.id;
+                        final itemName = data['itemName'] ?? 'Unknown Item';
+                        final price = (data['price'] as num?)?.toDouble() ?? 0.0;
+                        final stock = (data['stock'] as num?)?.toInt() ?? 0;
+
+                        bool isSelected = tempSelectedQuantities.containsKey(docId);
+                        int qty = tempSelectedQuantities[docId] ?? 1;
+
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          child: ListTile(
+                            title: Text(itemName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text("Price: ₱$price | Stock: $stock"),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (isSelected) ...[
+                                  IconButton(
+                                    icon: const Icon(Icons.remove, size: 18),
+                                    onPressed: () {
+                                      setModalState(() {
+                                        if (qty > 1) {
+                                          tempSelectedQuantities[docId] = qty - 1;
+                                        } else {
+                                          tempSelectedQuantities.remove(docId);
+                                        }
+                                      });
+                                    },
+                                  ),
+                                  Text("$qty", style: const TextStyle(fontWeight: FontWeight.bold)),
+                                  IconButton(
+                                    icon: const Icon(Icons.add, size: 18),
+                                    onPressed: () {
+                                      setModalState(() {
+                                        if (qty < stock) {
+                                          tempSelectedQuantities[docId] = qty + 1;
+                                        }
+                                      });
+                                    },
+                                  ),
+                                ],
+                                Checkbox(
+                                  activeColor: navyBlue,
+                                  value: isSelected,
+                                  onChanged: (bool? value) {
+                                    setModalState(() {
+                                      if (value == true) {
+                                        tempSelectedQuantities[docId] = 1;
+                                      } else {
+                                        tempSelectedQuantities.remove(docId);
+                                      }
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: navyBlue,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () async {
+                        if (tempSelectedQuantities.isEmpty) {
+                          Navigator.pop(context);
+                          return;
+                        }
+
+                        for (var entry in tempSelectedQuantities.entries) {
+                          final docRef = await FirebaseFirestore.instance.collection('Inventory').doc(entry.key).get();
+                          if (docRef.exists) {
+                            final data = docRef.data() as Map<String, dynamic>;
+                            _addItemToCart(
+                              entry.key,
+                              data['itemName'] ?? 'Unknown',
+                              (data['price'] as num?)?.toDouble() ?? 0.0,
+                              (data['cost'] as num?)?.toDouble() ?? 0.0,
+                              (data['stock'] as num?)?.toInt() ?? 0,
+                              entry.value,
+                            );
+                          }
+                        }
+
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Selected items added to cart!"), backgroundColor: Colors.green),
+                        );
+                      },
+                      child: const Text("Select & Add", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openCameraScanner() async {
+    final scannedResult = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const CameraScreen()),
+    );
+
+    if (scannedResult != null && scannedResult is String && mounted) {
+      final firestore = FirebaseFirestore.instance;
+      
+      var querySnapshot = await firestore
+          .collection('Inventory')
+          .where('userId', isEqualTo: user?.uid)
+          .where('barcode', isEqualTo: scannedResult)
+          .get();
+
+      if (querySnapshot.docs.isNotEmpty) {
+        final doc = querySnapshot.docs.first;
+        _addItemToCart(
+          doc.id, 
+          doc['itemName'] ?? 'Unknown Item', 
+          (doc['price'] as num?)?.toDouble() ?? 0.0, 
+          (doc['cost'] as num?)?.toDouble() ?? 0.0, 
+          (doc['stock'] as num?)?.toInt() ?? 0,
+          1
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Added: ${doc['itemName']}"), backgroundColor: Colors.green),
+        );
+        return;
+      }
+
+      var nameQuery = await firestore
+          .collection('Inventory')
+          .where('userId', isEqualTo: user?.uid)
+          .get();
+
+      final matchedDocs = nameQuery.docs.where((doc) {
+        final itemName = doc['itemName']?.toString().toLowerCase() ?? '';
+        return itemName.contains(scannedResult.toLowerCase());
+      }).toList();
+
+      if (matchedDocs.isNotEmpty) {
+        final doc = matchedDocs.first;
+        _addItemToCart(
+          doc.id, 
+          doc['itemName'] ?? 'Unknown Item', 
+          (doc['price'] as num?)?.toDouble() ?? 0.0, 
+          (doc['cost'] as num?)?.toDouble() ?? 0.0, 
+          (doc['stock'] as num?)?.toInt() ?? 0,
+          1
+        );
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Added: ${doc['itemName']}"), backgroundColor: Colors.green),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Item not found in database: $scannedResult"), backgroundColor: Colors.redAccent),
+        );
+      }
+    }
+  }
+
   void _showReceiptOverview() {
     if (_cartItems.isEmpty) return;
 
@@ -147,31 +394,55 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
       double totalProfit = 0.0;
 
       for (var item in _cartItems) {
-        DocumentReference invRef = firestore.collection('inventory').doc(item['id']);
+        DocumentReference invRef = firestore.collection('Inventory').doc(item['id']);
         DocumentSnapshot doc = await invRef.get();
 
         if (!doc.exists) throw "Item '${item['name']}' not found.";
 
         int currentStock = (doc['stock'] as num).toInt();
+        int currentTotalSold = (doc.data() as Map<String, dynamic>).containsKey('totalSold') 
+            ? (doc['totalSold'] as num).toInt() 
+            : 0;
+
         int requestedQty = (item['quantity'] as num).toInt();
         int newStock = currentStock - requestedQty;
+        int newTotalSold = currentTotalSold + requestedQty;
 
         double itemPrice = (item['price'] as num).toDouble();
         double itemCost = (item['cost'] as num).toDouble();
         totalProfit += (itemPrice - itemCost) * requestedQty;
 
-        String newStatus = "In Stock";
-        if (newStock <= 0) newStatus = "Out of Stock";
-        else if (newStock <= 5) newStatus = "Critical";
-        else if (newStock <= 10) newStatus = "Low Stock";
+        int estimatedTotalVolume = currentStock + currentTotalSold;
+        double percentageSold = estimatedTotalVolume > 0 ? (newTotalSold / estimatedTotalVolume) : 0.0;
 
-        batch.update(invRef, {'stock': newStock < 0 ? 0 : newStock, 'status': newStatus});
+        String newStatus = "In Stock";
+        if (newStock <= 0) {
+          newStatus = "Out of Stock";
+        } else if (percentageSold >= 0.80 || newStock <= 5) {
+          newStatus = "Critical";
+        } else if (percentageSold >= 0.60 || newStock <= 10) {
+          newStatus = "Low Stock";
+        }
+
+        batch.update(invRef, {
+          'stock': newStock < 0 ? 0 : newStock,
+          'totalSold': newTotalSold,
+          'status': newStatus,
+        });
       }
+
+      final cleanCartItems = _cartItems.map((item) => {
+        'id': item['id'],
+        'name': item['name'],
+        'price': item['price'],
+        'cost': item['cost'],
+        'quantity': item['quantity'],
+      }).toList();
 
       DocumentReference transRef = firestore.collection('transactions').doc();
       batch.set(transRef, {
         'userId': user!.uid,
-        'items': _cartItems,
+        'items': cleanCartItems,
         'totalAmount': _totalAmount,
         'profit': totalProfit,
         'timestamp': FieldValue.serverTimestamp(),
@@ -185,7 +456,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         _totalAmount = 0.0;
       });
 
-      messenger.showSnackBar(const SnackBar(content: Text("Checkout Successful!"), backgroundColor: Colors.green));
+      messenger.showSnackBar(const SnackBar(content: Text("Checkout Successful! Inventory & Velocity Updated."), backgroundColor: Colors.green));
     } catch (e) {
       if (navigator.canPop()) navigator.pop();
       messenger.showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
@@ -206,7 +477,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
       ),
       body: Column(
         children: [
-          _buildSearchBar(isDark),
+          _buildSearchTriggerBar(isDark),
           Expanded(
             child: _cartItems.isEmpty
                 ? const Center(child: Text("No items in cart"))
@@ -221,33 +492,27 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     );
   }
 
-  Widget _buildSearchBar(bool isDark) {
+  Widget _buildSearchTriggerBar(bool isDark) {
     return Padding(
       padding: const EdgeInsets.all(16.0),
-      child: SearchAnchor(
-        searchController: _searchController,
-        builder: (context, controller) => SearchBar(
-          controller: controller,
-          onTap: () => controller.openView(),
-          leading: const Icon(Icons.search),
-          hintText: "Search items to sell...",
-          backgroundColor: WidgetStatePropertyAll(isDark ? const Color(0xFF242526) : Colors.white),
+      child: InkWell(
+        onTap: _openMultiSelectSearchModal,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF242526) : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.search, color: Colors.grey),
+              SizedBox(width: 12),
+              Text("Search items to select...", style: TextStyle(color: Colors.grey, fontSize: 15)),
+            ],
+          ),
         ),
-        suggestionsBuilder: (context, controller) async {
-          final snapshot = await FirebaseFirestore.instance.collection('inventory').where('userId', isEqualTo: user?.uid).get();
-          return snapshot.docs
-              .where((doc) => doc['itemName'].toString().toLowerCase().contains(controller.text.toLowerCase()))
-              .map((doc) => ListTile(
-            title: Text(doc['itemName']),
-            subtitle: Text("Price: ₱${doc['price']} | Stock: ${doc['stock']}"),
-            trailing: const Icon(Icons.add_shopping_cart, color: Colors.blue),
-            onTap: () {
-              _addItemToCart(doc.id, doc['itemName'], (doc['price'] as num).toDouble(), (doc['cost'] as num).toDouble(), (doc['stock'] as num).toInt());
-              controller.closeView(null);
-            },
-          ))
-              .toList();
-        },
       ),
     );
   }
@@ -296,6 +561,21 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
       ),
       child: Column(
         children: [
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _openCameraScanner,
+              icon: const Icon(Icons.camera_alt),
+              label: const Text("SCAN ITEM (BARCODE / AI VISION)"),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: navyBlue,
+                side: BorderSide(color: navyBlue),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+          const SizedBox(height: 15),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -307,7 +587,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: _cartItems.isEmpty ? null : _showReceiptOverview, // UPDATED TO SHOW OVERVIEW
+              onPressed: _cartItems.isEmpty ? null : _showReceiptOverview,
               style: ElevatedButton.styleFrom(
                 backgroundColor: navyBlue,
                 foregroundColor: Colors.white,
