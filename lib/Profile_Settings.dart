@@ -37,8 +37,9 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   void _loadUserData() async {
     _emailController.text = user?.email ?? "";
     try {
+      // FIXED: Changed collection to lowercase 'users' to match Store Settings
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
-          .collection('Users') // FIXED: Changed from 'users' to 'Users'
+          .collection('users')
           .doc(user?.uid)
           .get();
 
@@ -60,6 +61,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     );
   }
 
+  // --- 1. MPIN VERIFICATION FIRST ---
   Future<bool> _verifyMpin() async {
     if (_storedMpin == null) {
       _showSnackBar("Please setup an MPIN in Store Settings first.", isError: true);
@@ -77,12 +79,12 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         return AlertDialog(
           backgroundColor: isDark ? const Color(0xFF242526) : Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text("Verify MPIN",
+          title: Text("Confirm Password Change",
               style: TextStyle(color: isDark ? Colors.white : navyBlue, fontWeight: FontWeight.bold)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text("Enter your 4-digit MPIN to authorize changes:"),
+              const Text("Enter your 4-digit MPIN to confirm you want to change your password:"),
               const SizedBox(height: 15),
               TextField(
                 controller: mpinInputController,
@@ -113,7 +115,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                   _showSnackBar("Incorrect MPIN", isError: true);
                 }
               },
-              child: const Text("Verify", style: TextStyle(color: Colors.white)),
+              child: const Text("Confirm MPIN", style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -122,6 +124,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     return isVerified;
   }
 
+  // --- 2. CURRENT PASSWORD PROMPT SECOND ---
   Future<String?> _showPasswordPrompt() async {
     String? password;
     return showDialog<String>(
@@ -135,7 +138,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text("Enter your CURRENT password to authorize this sensitive change."),
+              const Text("Enter your CURRENT account password to finalize the change."),
               const SizedBox(height: 15),
               TextField(
                 obscureText: true,
@@ -152,7 +155,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: navyBlue),
               onPressed: () => Navigator.pop(context, password),
-              child: const Text("Confirm", style: TextStyle(color: Colors.white)),
+              child: const Text("Submit", style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -165,52 +168,53 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
 
     bool isChangingPassword = _passwordController.text.isNotEmpty;
 
-    if (isChangingPassword && _passwordController.text != _confirmPasswordController.text) {
-      _showSnackBar("Passwords do not match!", isError: true);
-      return;
-    }
-
     if (isChangingPassword) {
+      if (_passwordController.text != _confirmPasswordController.text) {
+        _showSnackBar("New passwords do not match!", isError: true);
+        return;
+      }
+
+      // Step A: Prompt MPIN first to confirm password change intent
       bool mpinVerified = await _verifyMpin();
       if (!mpinVerified) return;
-    }
 
-    setState(() => _isLoading = true);
+      // Step B: Prompt current password for Firebase re-authentication
+      String? currentPassword = await _showPasswordPrompt();
+      if (currentPassword == null || currentPassword.isEmpty) {
+        return;
+      }
 
-    try {
-      if (isChangingPassword) {
-        String? currentPassword = await _showPasswordPrompt();
-        if (currentPassword == null) {
-          setState(() => _isLoading = false);
-          return;
-        }
+      setState(() => _isLoading = true);
 
+      try {
         AuthCredential credential = EmailAuthProvider.credential(
           email: user!.email!,
           password: currentPassword,
         );
-
         await user!.reauthenticateWithCredential(credential);
+        await user?.updatePassword(_passwordController.text.trim());
+      } on FirebaseAuthException catch (e) {
+        setState(() => _isLoading = false);
+        if (e.code == 'wrong-password') {
+          _showSnackBar("Incorrect current password.", isError: true);
+        } else {
+          _showSnackBar(e.message ?? "An authentication error occurred", isError: true);
+        }
+        return;
       }
+    } else {
+      setState(() => _isLoading = true);
+    }
 
-      // FIXED: Changed collection to 'Users' and used merge set
-      await FirebaseFirestore.instance.collection('Users').doc(user?.uid).set({
+    try {
+      // Update Store Name in Firestore using lowercase 'users'
+      await FirebaseFirestore.instance.collection('users').doc(user?.uid).set({
         'storeName': _storeNameController.text.trim(),
       }, SetOptions(merge: true));
-
-      if (isChangingPassword) {
-        await user?.updatePassword(_passwordController.text.trim());
-      }
 
       if (mounted) {
         _showSnackBar("Profile updated successfully.");
         Navigator.pop(context);
-      }
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'wrong-password') {
-        _showSnackBar("Incorrect current password.", isError: true);
-      } else {
-        _showSnackBar(e.message ?? "An error occurred", isError: true);
       }
     } catch (e) {
       _showSnackBar("Update failed: $e", isError: true);
@@ -238,54 +242,54 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: navyBlue))
           : Padding(
-        padding: const EdgeInsets.all(20.0),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildLabel("Store Name", isDark),
-                      _buildTextField(_storeNameController, Icons.storefront, isDark),
-                      const SizedBox(height: 20),
-                      _buildLabel("Email Address (Not Editable)", isDark),
-                      _buildTextField(_emailController, Icons.email_outlined, isDark, isReadOnly: true),
-                      const SizedBox(height: 20),
-                      _buildLabel("New Password", isDark),
-                      _buildTextField(_passwordController, Icons.lock_outline, isDark, isPassword: true),
-                      const SizedBox(height: 20),
-                      _buildLabel("Confirm New Password", isDark),
-                      _buildTextField(_confirmPasswordController, Icons.lock_reset, isDark, isPassword: true),
-                      const SizedBox(height: 30),
-                      Center(
-                        child: Text("Account created: $creationDate",
-                            style: TextStyle(color: isDark ? Colors.white38 : Colors.black38, fontSize: 12)),
+              padding: const EdgeInsets.all(20.0),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildLabel("Store Name", isDark),
+                            _buildTextField(_storeNameController, Icons.storefront, isDark),
+                            const SizedBox(height: 20),
+                            _buildLabel("Email Address (Not Editable)", isDark),
+                            _buildTextField(_emailController, Icons.email_outlined, isDark, isReadOnly: true),
+                            const SizedBox(height: 20),
+                            _buildLabel("New Password (Optional)", isDark),
+                            _buildTextField(_passwordController, Icons.lock_outline, isDark, isPassword: true),
+                            const SizedBox(height: 20),
+                            _buildLabel("Confirm New Password", isDark),
+                            _buildTextField(_confirmPasswordController, Icons.lock_reset, isDark, isPassword: true),
+                            const SizedBox(height: 30),
+                            Center(
+                              child: Text("Account created: $creationDate",
+                                  style: TextStyle(color: isDark ? Colors.white38 : Colors.black38, fontSize: 12)),
+                            ),
+                          ],
+                        ),
                       ),
-                    ],
-                  ),
+                    ),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 55,
+                      child: ElevatedButton(
+                        onPressed: _handleUpdate,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: navyBlue,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                          elevation: 0,
+                        ),
+                        child: const Text("Save Changes",
+                            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              SizedBox(
-                width: double.infinity,
-                height: 55,
-                child: ElevatedButton(
-                  onPressed: _handleUpdate,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: navyBlue,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-                    elevation: 0,
-                  ),
-                  child: const Text("Save Changes",
-                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+            ),
     );
   }
 
@@ -307,16 +311,16 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         prefixIcon: Icon(icon, color: navyBlue),
         suffixIcon: isPassword
             ? IconButton(
-          icon: Icon(
-            _obscurePassword ? Icons.visibility_off : Icons.visibility,
-            color: Colors.grey,
-          ),
-          onPressed: () {
-            setState(() {
-              _obscurePassword = !_obscurePassword;
-            });
-          },
-        )
+                icon: Icon(
+                  _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                  color: Colors.grey,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _obscurePassword = !_obscurePassword;
+                  });
+                },
+              )
             : null,
         filled: true,
         fillColor: isDark ? const Color(0xFF242526) : Colors.white,

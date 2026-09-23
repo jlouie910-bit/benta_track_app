@@ -24,10 +24,15 @@ class _AddItemScreenState extends State<AddItemScreen> {
   late TextEditingController _costController;
   late TextEditingController _stockController;
   late TextEditingController _barcodeController;
+  
+  // TINGI SYSTEM CONTROLLERS
+  late TextEditingController _piecesPerPackController;
+  late TextEditingController _packsController;
 
   String _selectedCategory = 'Food Products & Staples';
   String? _capturedImagePath;
   bool _isUploading = false;
+  bool _isPackItem = false; // Toggle for Tingi / Sold by Pack
 
   final List<String> _categories = [
     'Food Products & Staples',
@@ -38,7 +43,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
   ];
 
   final Color navyBlue = const Color(0xFF1E3A5F);
-  final Color tealAccent = const Color(0xFF4FD1C5); // Fixed: Defined here
+  final Color tealAccent = const Color(0xFF4FD1C5);
 
   @override
   void initState() {
@@ -48,6 +53,11 @@ class _AddItemScreenState extends State<AddItemScreen> {
     _costController = TextEditingController(text: widget.initialData?['cost']?.toString() ?? '');
     _stockController = TextEditingController(text: widget.initialData?['stock']?.toString() ?? '');
     _barcodeController = TextEditingController(text: widget.initialData?['barcode'] ?? '');
+    
+    _isPackItem = widget.initialData?['isPackItem'] ?? false;
+    _piecesPerPackController = TextEditingController(text: widget.initialData?['piecesPerPack']?.toString() ?? '1');
+    _packsController = TextEditingController(text: widget.initialData?['packs']?.toString() ?? '0');
+
     _capturedImagePath = widget.initialData?['imagePath'] ?? widget.initialData?['imageUrl'];
 
     if (widget.initialData?['category'] != null && _categories.contains(widget.initialData?['category'])) {
@@ -62,6 +72,8 @@ class _AddItemScreenState extends State<AddItemScreen> {
     _costController.dispose();
     _stockController.dispose();
     _barcodeController.dispose();
+    _piecesPerPackController.dispose();
+    _packsController.dispose();
     super.dispose();
   }
 
@@ -85,17 +97,15 @@ class _AddItemScreenState extends State<AddItemScreen> {
 
   void _pickItemImage() async {
     final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.camera, 
+      imageQuality: 70,
+    );
 
     if (image != null) {
       setState(() {
         _capturedImagePath = image.path;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Item photo attached for AI Vision!"), backgroundColor: Colors.green),
-        );
-      }
     }
   }
 
@@ -117,141 +127,8 @@ class _AddItemScreenState extends State<AddItemScreen> {
       String downloadUrl = await snapshot.ref.getDownloadURL();
       return downloadUrl;
     } catch (e) {
-      debugPrint("Error uploading image to Firebase Storage: $e");
+      debugPrint("Error uploading image: $e");
       return null;
-    }
-  }
-
-  void _showCatalogPickerModal() {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.7,
-        decoration: BoxDecoration(
-          color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1C1C1E) : Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
-        ),
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[400], borderRadius: BorderRadius.circular(2))),
-            const SizedBox(height: 15),
-            const Text("Select Existing Item", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const Text("Pick an item to populate fields automatically", style: TextStyle(color: Colors.grey, fontSize: 12)),
-            const Divider(height: 25),
-            Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('Inventory')
-                    .where('userId', isEqualTo: user.uid)
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                    return const Center(child: Text("No existing inventory items found."));
-                  }
-
-                  final docs = snapshot.data!.docs;
-
-                  return ListView.builder(
-                    itemCount: docs.length,
-                    itemBuilder: (context, index) {
-                      final doc = docs[index];
-                      final data = doc.data() as Map<String, dynamic>;
-                      final itemName = data['itemName'] ?? 'Unnamed';
-                      final stock = data['stock'] ?? 0;
-                      final price = data['price'] ?? 0;
-                      final category = data['category'] ?? 'Food Products & Staples';
-                      final cost = data['cost'] ?? 0;
-                      final barcode = data['barcode'] ?? '';
-                      final image = data['imagePath'] ?? data['imageUrl'];
-
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        child: ListTile(
-                          title: Text(itemName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text("Stock: $stock | Price: ₱$price"),
-                          trailing: ElevatedButton(
-                            style: ElevatedButton.styleFrom(backgroundColor: navyBlue, foregroundColor: Colors.white),
-                            onPressed: () {
-                              setState(() {
-                                _nameController.text = itemName;
-                                _priceController.text = price.toString();
-                                _costController.text = cost.toString();
-                                _stockController.text = stock.toString();
-                                _barcodeController.text = barcode;
-                                if (_categories.contains(category)) {
-                                  _selectedCategory = category;
-                                }
-                                if (image != null) {
-                                  _capturedImagePath = image;
-                                }
-                              });
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text("Loaded details for: $itemName"), backgroundColor: Colors.teal),
-                              );
-                            },
-                            child: const Text("Select"),
-                          ),
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _deleteItem() async {
-    if (widget.documentId == null) return;
-
-    bool? confirmDelete = await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Delete Item"),
-        content: const Text("Are you sure you want to permanently remove this item from your inventory and Firebase?"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("Cancel"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text("Delete"),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmDelete == true) {
-      try {
-        await FirebaseFirestore.instance.collection('Inventory').doc(widget.documentId).delete();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Item deleted successfully!"), backgroundColor: Colors.red),
-          );
-          Navigator.pop(context);
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Error deleting item: $e"), backgroundColor: Colors.red),
-          );
-        }
-      }
     }
   }
 
@@ -267,14 +144,25 @@ class _AddItemScreenState extends State<AddItemScreen> {
 
     final double price = double.parse(_priceController.text);
     final double cost = double.parse(_costController.text);
-    final int stock = int.parse(_stockController.text);
+    
+    int finalStock = 0;
+    int packsCount = 0;
+    int piecesPerPackCount = 1;
+
+    if (_isPackItem) {
+      packsCount = int.parse(_packsController.text);
+      piecesPerPackCount = int.parse(_piecesPerPackController.text);
+      finalStock = packsCount * piecesPerPackCount; 
+    } else {
+      finalStock = int.parse(_stockController.text);
+    }
 
     String status = 'In Stock';
-    if (stock <= 0) {
+    if (finalStock <= 0) {
       status = 'Critical';
-    } else if (stock <= 5) {
+    } else if (finalStock <= 5) {
       status = 'Critical';
-    } else if (stock <= 10) {
+    } else if (finalStock <= 10) {
       status = 'Low Stock';
     }
 
@@ -289,45 +177,33 @@ class _AddItemScreenState extends State<AddItemScreen> {
       }
 
       final firestore = FirebaseFirestore.instance;
+      final itemData = {
+        'userId': user.uid,
+        'itemName': _nameController.text.trim(),
+        'category': _selectedCategory,
+        'price': price,
+        'cost': cost,
+        'stock': finalStock,
+        'isPackItem': _isPackItem,
+        'piecesPerPack': piecesPerPackCount,
+        'packs': packsCount,
+        'barcode': finalBarcode,
+        'status': status,
+        'imagePath': imageUrl ?? _capturedImagePath,
+        'timestamp': FieldValue.serverTimestamp(),
+      };
 
       if (widget.documentId != null) {
-        await firestore.collection('Inventory').doc(widget.documentId).update({
-          'itemName': _nameController.text.trim(),
-          'category': _selectedCategory,
-          'price': price,
-          'cost': cost,
-          'stock': stock,
-          'barcode': finalBarcode,
-          'status': status,
-          'imagePath': imageUrl ?? _capturedImagePath,
-        });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Item updated successfully!"), backgroundColor: Colors.green),
-          );
-          Navigator.pop(context);
-        }
+        await firestore.collection('Inventory').doc(widget.documentId).update(itemData);
       } else {
-        await firestore.collection('Inventory').add({
-          'userId': user.uid,
-          'itemName': _nameController.text.trim(),
-          'category': _selectedCategory,
-          'price': price,
-          'cost': cost,
-          'stock': stock,
-          'barcode': finalBarcode,
-          'status': status,
-          'imagePath': imageUrl ?? _capturedImagePath,
-          'timestamp': FieldValue.serverTimestamp(),
-        });
+        await firestore.collection('Inventory').add(itemData);
+      }
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Item added successfully!"), backgroundColor: Colors.green),
-          );
-          Navigator.pop(context);
-        }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Item saved successfully!"), backgroundColor: Colors.green),
+        );
+        Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) {
@@ -346,20 +222,14 @@ class _AddItemScreenState extends State<AddItemScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.documentId != null ? "Edit / Restock Item" : "Add New Item",
+        title: Text(widget.documentId != null ? "Edit Item" : "Add New Item",
             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: navyBlue,
         iconTheme: const IconThemeData(color: Colors.white),
-        actions: [
-          if (widget.documentId != null)
-            IconButton(
-              icon: const Icon(Icons.delete, color: Colors.redAccent),
-              onPressed: _deleteItem,
-              tooltip: "Delete Item",
-            ),
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20.0),
@@ -368,19 +238,40 @@ class _AddItemScreenState extends State<AddItemScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (widget.documentId == null) ...[
-                ElevatedButton.icon(
-                  onPressed: _showCatalogPickerModal,
-                  icon: const Icon(Icons.list_alt, color: Colors.white),
-                  label: const Text("Select Existing Item from Catalog", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: tealAccent,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              // --- PRODUCT IMAGE PICKER WIDGET ---
+              Center(
+                child: GestureDetector(
+                  onTap: _pickItemImage,
+                  child: Container(
+                    width: 110,
+                    height: 110,
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF242526) : Colors.grey[200],
+                      borderRadius: BorderRadius.circular(15),
+                      border: Border.all(color: tealAccent, width: 2),
+                    ),
+                    child: _capturedImagePath != null
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(13),
+                            child: _capturedImagePath!.startsWith('http://') || _capturedImagePath!.startsWith('https://')
+                                ? Image.network(_capturedImagePath!, fit: BoxFit.cover)
+                                : Image.file(File(_capturedImagePath!), fit: BoxFit.cover),
+                          )
+                        : Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.camera_alt, color: tealAccent, size: 32),
+                              const SizedBox(height: 6),
+                              const Text(
+                                "Add Photo", 
+                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                              ),
+                            ],
+                          ),
                   ),
                 ),
-                const SizedBox(height: 20),
-              ],
+              ),
+              const SizedBox(height: 20),
 
               TextFormField(
                 controller: _nameController,
@@ -398,7 +289,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                     child: TextFormField(
                       controller: _barcodeController,
                       decoration: InputDecoration(
-                        labelText: "Barcode (Optional / Auto-generated)",
+                        labelText: "Barcode (Optional)",
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                     ),
@@ -430,11 +321,76 @@ class _AddItemScreenState extends State<AddItemScreen> {
                 onChanged: (value) => setState(() => _selectedCategory = value!),
               ),
               const SizedBox(height: 16),
+
+              // --- TINGI / PACK TOGGLE SWITCH ---
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  border: Border.all(color: tealAccent, width: 1.5),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: SwitchListTile(
+                  title: const Text("Bought in Pack, Sold by Piece (Tingi)", style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text("Enable if bought in bulk packs/boxes and sold individually (e.g. Cigarettes, Cotton Buds)", style: TextStyle(fontSize: 11)),
+                  value: _isPackItem,
+                  activeThumbColor: tealAccent,
+                  onChanged: (bool value) {
+                    setState(() {
+                      _isPackItem = value;
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // DYNAMIC FIELDS DEPENDING ON TINGI TOGGLE
+              if (_isPackItem) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _packsController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: "Packs / Boxes in Stock",
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        validator: (value) => _isPackItem && (value == null || int.tryParse(value) == null) ? 'Enter packs' : null,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _piecesPerPackController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: "Pieces per Pack",
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        validator: (value) => _isPackItem && (value == null || int.tryParse(value) == null) ? 'Enter count' : null,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+              ] else ...[
+                TextFormField(
+                  controller: _stockController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: "Stock Quantity (Pieces)",
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  validator: (value) => !_isPackItem && (value == null || int.tryParse(value) == null) ? 'Please enter valid stock' : null,
+                ),
+                const SizedBox(height: 16),
+              ],
+
               TextFormField(
                 controller: _priceController,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: InputDecoration(
-                  labelText: "Selling Price (₱)",
+                  labelText: "Selling Price per Piece (₱)",
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                 ),
                 validator: (value) => value == null || double.tryParse(value) == null ? 'Please enter a valid price' : null,
@@ -444,65 +400,13 @@ class _AddItemScreenState extends State<AddItemScreen> {
                 controller: _costController,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: InputDecoration(
-                  labelText: "Capital / Cost (₱)",
+                  labelText: _isPackItem ? "Capital Cost per Whole Pack (₱)" : "Capital Cost (₱)",
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                 ),
                 validator: (value) => value == null || double.tryParse(value) == null ? 'Please enter a valid cost' : null,
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _stockController,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: "Stock Quantity",
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                ),
-                validator: (value) => value == null || int.tryParse(value) == null ? 'Please enter a valid quantity' : null,
-              ),
               const SizedBox(height: 20),
 
-              Container(
-                padding: const EdgeInsets.all(15),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade400),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Column(
-                  children: [
-                    const Row(
-                      children: [
-                        Icon(Icons.camera_alt, color: Colors.blueGrey),
-                        SizedBox(width: 8),
-                        Text("Item Photo for AI Vision (Optional)", style: TextStyle(fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    if (_capturedImagePath != null)
-                      Container(
-                        height: 120,
-                        width: double.infinity,
-                        margin: const EdgeInsets.only(bottom: 10),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(8),
-                          image: DecorationImage(
-                            image: _capturedImagePath!.startsWith('http')
-                                ? NetworkImage(_capturedImagePath!) as ImageProvider
-                                : FileImage(File(_capturedImagePath!)),
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      ),
-                    OutlinedButton.icon(
-                      onPressed: _pickItemImage,
-                      icon: const Icon(Icons.add_a_photo),
-                      label: Text(_capturedImagePath == null ? "Take Photo of Item" : "Retake Photo"),
-                      style: OutlinedButton.styleFrom(foregroundColor: navyBlue),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 30),
               ElevatedButton(
                 onPressed: _isUploading ? null : _saveItem,
                 style: ElevatedButton.styleFrom(
@@ -511,11 +415,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
                 child: _isUploading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                      )
+                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                     : Text(
                         widget.documentId != null ? "UPDATE ITEM" : "SAVE ITEM",
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),

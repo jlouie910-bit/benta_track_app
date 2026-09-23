@@ -29,8 +29,9 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
   Future<void> _fetchCurrentSettings() async {
     setState(() => _isLoading = true);
     try {
+      // FIXED: Changed 'users' to 'Users' to match WelcomeSetupScreen
       DocumentSnapshot doc = await FirebaseFirestore.instance
-          .collection('users')
+          .collection('Users')
           .doc(user?.uid)
           .get();
 
@@ -51,7 +52,7 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
     final TextEditingController oldMpinController = TextEditingController();
     final TextEditingController newMpinController = TextEditingController();
     final TextEditingController confirmMpinController = TextEditingController();
-    final bool isChanging = _existingMpin != null;
+    final bool isChanging = _existingMpin != null && _existingMpin!.isNotEmpty;
 
     showDialog(
       context: context,
@@ -139,7 +140,7 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
 
   // --- DELETE ACCOUNT LOGIC ---
   Future<void> _deleteAccount() async {
-    if (_existingMpin == null) {
+    if (_existingMpin == null || _existingMpin!.isEmpty) {
       _showError("Please set an MPIN first.");
       return;
     }
@@ -203,7 +204,8 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
 
     setState(() => _isLoading = true);
     try {
-      await FirebaseFirestore.instance.collection('users').doc(user?.uid).delete();
+      // FIXED: Changed 'users' to 'Users'
+      await FirebaseFirestore.instance.collection('Users').doc(user?.uid).delete();
       await user?.delete();
 
       if (mounted) {
@@ -253,9 +255,11 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
   Future<void> _updateMpinInFirebase(String newMpin) async {
     setState(() => _isLoading = true);
     try {
-      await FirebaseFirestore.instance.collection('users').doc(user?.uid).update({
+      // FIXED: Changed 'users' to 'Users'
+      await FirebaseFirestore.instance.collection('Users').doc(user?.uid).set({
         'mpin': newMpin,
-      });
+      }, SetOptions(merge: true));
+
       setState(() => _existingMpin = newMpin);
       _showSuccess("Security MPIN updated!");
     } catch (e) {
@@ -303,23 +307,23 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
               leading: Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: (_existingMpin != null ? Colors.green : Colors.orange).withOpacity(0.1),
+                  color: (_existingMpin != null && _existingMpin!.isNotEmpty ? Colors.green : Colors.orange).withOpacity(0.1),
                   shape: BoxShape.circle,
                 ),
                 child: Icon(
-                  _existingMpin != null ? Icons.shield_rounded : Icons.add_moderator_rounded,
-                  color: _existingMpin != null ? Colors.green : Colors.orange,
+                  (_existingMpin != null && _existingMpin!.isNotEmpty) ? Icons.shield_rounded : Icons.add_moderator_rounded,
+                  color: (_existingMpin != null && _existingMpin!.isNotEmpty) ? Colors.green : Colors.orange,
                 ),
               ),
               title: Text(
-                _existingMpin != null ? "Change Security MPIN" : "Setup Security MPIN",
+                (_existingMpin != null && _existingMpin!.isNotEmpty) ? "Change Security MPIN" : "Setup Security MPIN",
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   color: isDark ? Colors.white : navyBlue,
                 ),
               ),
               subtitle: Text(
-                _existingMpin != null ? "Active Protection" : "Protect crucial actions",
+                (_existingMpin != null && _existingMpin!.isNotEmpty) ? "Active Protection" : "Protect crucial actions",
                 style: TextStyle(color: isDark ? Colors.white38 : Colors.black38),
               ),
               trailing: Icon(Icons.arrow_forward_ios, size: 14, color: isDark ? Colors.white24 : Colors.black26),

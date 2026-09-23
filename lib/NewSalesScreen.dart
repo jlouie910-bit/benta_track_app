@@ -25,8 +25,13 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     setState(() => _totalAmount = total);
   }
 
-  void _addItemToCart(String id, String name, double price, double cost, int stock, int quantityToAdd) {
+  void _addItemToCart(String id, String name, double price, double cost, int stock, int quantityToAdd, {bool isPack = false, int piecesPerPack = 1}) {
     if (stock <= 0 || quantityToAdd <= 0) return;
+
+    double effectiveCost = cost;
+    if (isPack && piecesPerPack > 0) {
+      effectiveCost = cost / piecesPerPack;
+    }
 
     setState(() {
       int index = _cartItems.indexWhere((item) => item['id'] == id);
@@ -42,7 +47,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
           'id': id,
           'name': name,
           'price': price,
-          'cost': cost,
+          'cost': effectiveCost,
           'quantity': quantityToAdd <= stock ? quantityToAdd : stock,
           'maxStock': stock
         });
@@ -222,14 +227,18 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                               (data['cost'] as num?)?.toDouble() ?? 0.0,
                               (data['stock'] as num?)?.toInt() ?? 0,
                               entry.value,
+                              isPack: data['isPackItem'] ?? false,
+                              piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
                             );
                           }
                         }
 
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Selected items added to cart!"), backgroundColor: Colors.green),
-                        );
+                        if (context.mounted) {
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text("Selected items added to cart!"), backgroundColor: Colors.green),
+                          );
+                        }
                       },
                       child: const Text("Select & Add", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                     ),
@@ -260,16 +269,19 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
 
       if (querySnapshot.docs.isNotEmpty) {
         final doc = querySnapshot.docs.first;
+        final data = doc.data();
         _addItemToCart(
           doc.id, 
-          doc['itemName'] ?? 'Unknown Item', 
-          (doc['price'] as num?)?.toDouble() ?? 0.0, 
-          (doc['cost'] as num?)?.toDouble() ?? 0.0, 
-          (doc['stock'] as num?)?.toInt() ?? 0,
-          1
+          data['itemName'] ?? 'Unknown Item', 
+          (data['price'] as num?)?.toDouble() ?? 0.0, 
+          (data['cost'] as num?)?.toDouble() ?? 0.0, 
+          (data['stock'] as num?)?.toInt() ?? 0,
+          1,
+          isPack: data['isPackItem'] ?? false,
+          piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
         );
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Added: ${doc['itemName']}"), backgroundColor: Colors.green),
+          SnackBar(content: Text("Added: ${data['itemName']}"), backgroundColor: Colors.green),
         );
         return;
       }
@@ -280,23 +292,27 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
           .get();
 
       final matchedDocs = nameQuery.docs.where((doc) {
-        final itemName = doc['itemName']?.toString().toLowerCase() ?? '';
+        final data = doc.data();
+        final itemName = (data['itemName'] ?? '').toString().toLowerCase();
         return itemName.contains(scannedResult.toLowerCase());
       }).toList();
 
       if (matchedDocs.isNotEmpty) {
         final doc = matchedDocs.first;
+        final data = doc.data();
         _addItemToCart(
           doc.id, 
-          doc['itemName'] ?? 'Unknown Item', 
-          (doc['price'] as num?)?.toDouble() ?? 0.0, 
-          (doc['cost'] as num?)?.toDouble() ?? 0.0, 
-          (doc['stock'] as num?)?.toInt() ?? 0,
-          1
+          data['itemName'] ?? 'Unknown Item', 
+          (data['price'] as num?)?.toDouble() ?? 0.0, 
+          (data['cost'] as num?)?.toDouble() ?? 0.0, 
+          (data['stock'] as num?)?.toInt() ?? 0,
+          1,
+          isPack: data['isPackItem'] ?? false,
+          piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
         );
         
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Added: ${doc['itemName']}"), backgroundColor: Colors.green),
+          SnackBar(content: Text("Added: ${data['itemName']}"), backgroundColor: Colors.green),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(

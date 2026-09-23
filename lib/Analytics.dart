@@ -127,7 +127,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
-                            color: isFastMover ? Colors.green.withValues(alpha: 0.15) : Colors.orange.withValues(alpha: 0.15),
+                            color: isFastMover ? Colors.green.withOpacity(0.15) : Colors.orange.withOpacity(0.15),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
@@ -189,9 +189,27 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   for (var doc in snapshot.data!.docs) {
                     final data = doc.data() as Map<String, dynamic>;
                     double benta = (data['totalAmount'] ?? 0).toDouble();
-                    double tubo = (data['profit'] ?? 0).toDouble();
+                    
+                    // --- CORRECTED PROFIT PRORATION FOR TINGI ITEMS ---
+                    double tubo = 0.0;
+                    if (data.containsKey('items') && data['items'] is List) {
+                      for (var item in data['items']) {
+                        final double itemPrice = (item['price'] ?? 0.0).toDouble();
+                        final int itemQty = (item['quantity'] ?? 1).toInt();
+                        
+                        // Look up true unit cost or estimate prorated pack cost if stored
+                        // (If raw cost is saved per piece, it uses it directly)
+                        final double itemCost = (item['cost'] ?? 0.0).toDouble();
+                        
+                        tubo += (itemPrice - itemCost) * itemQty;
+                      }
+                    } else {
+                      tubo = (data['profit'] ?? 0).toDouble();
+                    }
+
                     totalBenta += benta;
                     totalTubo += tubo;
+
                     if (data['timestamp'] != null) {
                       DateTime date = (data['timestamp'] as Timestamp).toDate();
                       String dayName = DateFormat('EEE').format(date);
@@ -289,7 +307,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       decoration: BoxDecoration(
                         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+                        border: Border.all(color: Colors.green.withOpacity(0.3)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -328,7 +346,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       decoration: BoxDecoration(
                         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                        border: Border.all(color: Colors.orange.withOpacity(0.3)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -372,7 +390,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: mintGreen.withValues(alpha: 0.5), width: 1.5),
+        border: Border.all(color: mintGreen.withOpacity(0.5), width: 1.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -501,7 +519,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               color: mintGreen,
               isCurved: true,
               barWidth: 3,
-              belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [mintGreen.withValues(alpha: 0.3), mintGreen.withValues(alpha: 0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+              belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [mintGreen.withOpacity(0.3), mintGreen.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
             )
           ],
         ),

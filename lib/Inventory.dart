@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'add_items_screen.dart';
@@ -35,12 +36,216 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return const Stream.empty();
 
-    // Querying strictly by userId ensures high performance and avoids index overhead.
-    // Category & Status filtering are performed locally on the fetched snapshot stream.
     return FirebaseFirestore.instance
         .collection('Inventory')
         .where('userId', isEqualTo: user.uid)
         .snapshots();
+  }
+
+  // --- SECURE MPIN VERIFICATION FOR RESTOCK / EDIT ---
+  Future<void> _verifyAndRestock(Map<String, dynamic> data, String docId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      // FIXED: Changed 'users' to 'Users' to match WelcomeSetupScreen
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(user.uid)
+          .get();
+
+      if (!userDoc.exists) {
+        _showSnackBar("User profile record not found.", isError: true);
+        return;
+      }
+
+      final userData = userDoc.data() as Map<String, dynamic>?;
+      final String? storedMpin = userData?['mpin'];
+
+      if (storedMpin == null || storedMpin.isEmpty) {
+        _showSnackBar("Please set up your MPIN in Store Settings first.", isError: true);
+        return;
+      }
+
+      if (!mounted) return;
+
+      final TextEditingController mpinInputController = TextEditingController();
+      bool isVerified = false;
+
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          final bool isDark = Theme.of(context).brightness == Brightness.dark;
+          return AlertDialog(
+            backgroundColor: isDark ? const Color(0xFF242526) : Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text(
+              "Security MPIN Required",
+              style: TextStyle(color: isDark ? Colors.white : navyBlue, fontWeight: FontWeight.bold),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text("Enter your 4-digit MPIN to authorize modifying this inventory item:"),
+                const SizedBox(height: 15),
+                TextField(
+                  controller: mpinInputController,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  maxLength: 4,
+                  textAlign: TextAlign.center,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  style: TextStyle(fontSize: 24, letterSpacing: 10, color: isDark ? Colors.white : Colors.black),
+                  decoration: InputDecoration(
+                    counterText: "",
+                    filled: true,
+                    fillColor: isDark ? Colors.black26 : Colors.grey[200],
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: navyBlue,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () {
+                  if (mpinInputController.text == storedMpin) {
+                    isVerified = true;
+                    Navigator.pop(context);
+                  } else {
+                    _showSnackBar("Incorrect MPIN", isError: true);
+                  }
+                },
+                child: const Text("Verify", style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (isVerified && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => AddItemScreen(
+              initialData: data,
+              documentId: docId,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      _showSnackBar("Error verifying MPIN: $e", isError: true);
+    }
+  }
+
+  // --- SECURE MPIN VERIFICATION FOR ADDING NEW ITEM ---
+  Future<void> _verifyAndAddNew() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    try {
+      // FIXED: Changed 'users' to 'Users' to match WelcomeSetupScreen
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(user.uid)
+          .get();
+
+      if (!userDoc.exists) {
+        _showSnackBar("User profile record not found.", isError: true);
+        return;
+      }
+
+      final userData = userDoc.data() as Map<String, dynamic>?;
+      final String? storedMpin = userData?['mpin'];
+
+      if (storedMpin == null || storedMpin.isEmpty) {
+        _showSnackBar("Please set up your MPIN in Store Settings first.", isError: true);
+        return;
+      }
+
+      if (!mounted) return;
+
+      final TextEditingController mpinInputController = TextEditingController();
+      bool isVerified = false;
+
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          final bool isDark = Theme.of(context).brightness == Brightness.dark;
+          return AlertDialog(
+            backgroundColor: isDark ? const Color(0xFF242526) : Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text(
+              "Security MPIN Required",
+              style: TextStyle(color: isDark ? Colors.white : navyBlue, fontWeight: FontWeight.bold),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text("Enter your 4-digit MPIN to authorize adding a new item:"),
+                const SizedBox(height: 15),
+                TextField(
+                  controller: mpinInputController,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  maxLength: 4,
+                  textAlign: TextAlign.center,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  style: TextStyle(fontSize: 24, letterSpacing: 10, color: isDark ? Colors.white : Colors.black),
+                  decoration: InputDecoration(
+                    counterText: "",
+                    filled: true,
+                    fillColor: isDark ? Colors.black26 : Colors.grey[200],
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: navyBlue,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () {
+                  if (mpinInputController.text == storedMpin) {
+                    isVerified = true;
+                    Navigator.pop(context);
+                  } else {
+                    _showSnackBar("Incorrect MPIN", isError: true);
+                  }
+                },
+                child: const Text("Verify", style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (isVerified && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const AddItemScreen()),
+        );
+      }
+    } catch (e) {
+      _showSnackBar("Error verifying MPIN: $e", isError: true);
+    }
+  }
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : navyBlue),
+    );
   }
 
   Widget _buildProductThumbnail(String? imagePath, Widget fallbackIcon) {
@@ -107,8 +312,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       selected: isSelected,
                       onSelected: (_) => setState(() => _selectedStatusTab = tab),
                       selectedColor: tealAccent,
-                      backgroundColor: isDark 
-                          ? Colors.white.withOpacity(0.05) 
+                      backgroundColor: isDark
+                          ? Colors.white.withOpacity(0.05)
                           : Colors.white.withOpacity(0.1),
                       labelStyle: TextStyle(
                         color: isSelected ? Colors.black : (isDark ? fbTextGrey : Colors.black),
@@ -174,18 +379,15 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   return Center(child: Text("No items found", style: TextStyle(color: isDark ? fbTextGrey : Colors.grey)));
                 }
 
-                // Filter items in memory by both Category and Status
                 final docs = snapshot.data!.docs.where((doc) {
                   final data = doc.data() as Map<String, dynamic>;
-                  
-                  // Category Filter
+                 
                   if (_selectedCategory != 'All Categories') {
                     if ((data['category'] ?? '') != _selectedCategory) {
                       return false;
                     }
                   }
 
-                  // Status Filter
                   if (_selectedStatusTab != 'All Items') {
                     final status = data['status'] ?? 'In Stock';
                     if (status != _selectedStatusTab) {
@@ -260,7 +462,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
                             ),
                           ),
 
-                          // BUTTON SECTION
                           Padding(
                             padding: const EdgeInsets.only(right: 12, bottom: 12),
                             child: Row(
@@ -278,17 +479,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                     ] : [],
                                   ),
                                   child: ElevatedButton.icon(
-                                    onPressed: () {
-                                      Navigator.push(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (context) => AddItemScreen(
-                                            initialData: data,
-                                            documentId: doc.id,
-                                          ),
-                                        ),
-                                      );
-                                    },
+                                    onPressed: () => _verifyAndRestock(data, doc.id),
                                     icon: const Icon(Icons.add_business, size: 16, color: Colors.white),
                                     label: const Text("RESTOCK", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
                                     style: ElevatedButton.styleFrom(
@@ -312,7 +503,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AddItemScreen())),
+        onPressed: _verifyAndAddNew,
         label: const Text("Add New", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         icon: const Icon(Icons.add, color: Colors.white),
         backgroundColor: tealAccent,
