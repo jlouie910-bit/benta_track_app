@@ -190,15 +190,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     final data = doc.data() as Map<String, dynamic>;
                     double benta = (data['totalAmount'] ?? 0).toDouble();
                     
-                    // --- CORRECTED PROFIT PRORATION FOR TINGI ITEMS ---
                     double tubo = 0.0;
                     if (data.containsKey('items') && data['items'] is List) {
                       for (var item in data['items']) {
                         final double itemPrice = (item['price'] ?? 0.0).toDouble();
                         final int itemQty = (item['quantity'] ?? 1).toInt();
-                        
-                        // Look up true unit cost or estimate prorated pack cost if stored
-                        // (If raw cost is saved per piece, it uses it directly)
                         final double itemCost = (item['cost'] ?? 0.0).toDouble();
                         
                         tubo += (itemPrice - itemCost) * itemQty;
@@ -291,6 +287,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
         var topItem = docs.first.data() as Map<String, dynamic>;
         var slowItem = docs.last.data() as Map<String, dynamic>;
+        
+        // Correctly reversed list so slow movers show lowest sales first
+        var slowMoversList = List<QueryDocumentSnapshot>.from(docs.reversed);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -339,7 +338,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: InkWell(
-                    onTap: () => _showFullItemListModal("Slow Movers List", docs.reversed.toList(), false, isDark),
+                    onTap: () => _showFullItemListModal("Slow Movers List", slowMoversList, false, isDark),
                     borderRadius: BorderRadius.circular(15),
                     child: Container(
                       padding: const EdgeInsets.all(16),

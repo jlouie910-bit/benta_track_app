@@ -322,16 +322,25 @@ class _AddItemScreenState extends State<AddItemScreen> {
               ),
               const SizedBox(height: 16),
 
-              // --- TINGI / PACK TOGGLE SWITCH ---
+              // --- NEUTRAL TINGI / PACK TOGGLE SWITCH ---
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                 decoration: BoxDecoration(
-                  border: Border.all(color: tealAccent, width: 1.5),
                   borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: isDark ? Colors.grey.shade700 : Colors.grey.shade400,
+                    width: 1,
+                  ),
                 ),
                 child: SwitchListTile(
-                  title: const Text("Bought in Pack, Sold by Piece (Tingi)", style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: const Text("Enable if bought in bulk packs/boxes and sold individually (e.g. Cigarettes, Cotton Buds)", style: TextStyle(fontSize: 11)),
+                  title: const Text(
+                    "Bought in Pack, Sold by Piece (Tingi)", 
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                  ),
+                  subtitle: const Text(
+                    "Enable if bought in bulk packs/boxes and sold individually (e.g., Cigarettes, Candies, etc.)", 
+                    style: TextStyle(fontSize: 11),
+                  ),
                   value: _isPackItem,
                   activeThumbColor: tealAccent,
                   onChanged: (bool value) {

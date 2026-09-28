@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -16,10 +15,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   late final MobileScannerController _scannerController;
   GenerativeModel? _visionModel;
 
+  bool _isAiMode = true; // Default mode is AI Name Scanning
   bool _hasDetected = false;
   bool _isProcessingAi = false;
 
   final Color navyBlue = const Color(0xFF1E3A5F);
+  final Color tealAccent = const Color(0xFF4FD1C5);
 
   @override
   void initState() {
@@ -33,10 +34,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     );
 
     _scannerController = MobileScannerController(
-      detectionSpeed: DetectionSpeed.noDuplicates,
+      detectionSpeed: DetectionSpeed.unrestricted,
       facing: CameraFacing.back,
       torchEnabled: false,
-      autoStart: true,
+      autoStart: false, // Don't auto-start barcode stream when default is AI mode
       formats: const [
         BarcodeFormat.ean13,
         BarcodeFormat.ean8,
@@ -49,11 +50,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_scannerController.value.isInitialized) return;
-    if (state == AppLifecycleState.paused) {
-      _scannerController.stop();
-    } else if (state == AppLifecycleState.resumed) {
-      _scannerController.start();
+    if (!_isAiMode && _scannerController.value.isInitialized) {
+      if (state == AppLifecycleState.paused) {
+        _scannerController.stop();
+      } else if (state == AppLifecycleState.resumed) {
+        _scannerController.start();
+      }
     }
   }
 
@@ -64,8 +66,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     super.dispose();
   }
 
-  // Captures current camera view and analyzes image using Gemini AI
-  // Captures current camera view and analyzes image using Gemini AI
+  // Captures photo and analyzes item name using Gemini AI
   Future<void> _captureAndAnalyzeWithGemini() async {
     if (_isProcessingAi || _hasDetected || _visionModel == null) return;
 
@@ -73,7 +74,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     try {
       final ImagePicker picker = ImagePicker();
-      // Capture a photo directly from device camera
       final XFile? imageFile = await picker.pickImage(
         source: ImageSource.camera,
         imageQuality: 80,
@@ -84,7 +84,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
         final prompt = TextPart('''
           Analyze this product image carefully.
-          Return ONLY the exact item name string as it appears in a store catalog (e.g., "Coca Cola").
+          Return ONLY the exact item name string as it appears in a store catalog (e.g., "cotton buds", "Coca Cola"). Keep it short and generic.
           If no retail product is identified clearly, return "UNKNOWN".
         ''');
 
@@ -97,7 +97,10 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         final String detectedName = response.text?.trim() ?? 'UNKNOWN';
 
         if (detectedName != 'UNKNOWN' && detectedName.isNotEmpty) {
-          await fetchProductByCameraLabel(detectedName);
+          _hasDetected = true;
+          if (mounted) {
+            Navigator.pop(context, detectedName);
+          }
         } else if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("Could not identify product. Try again.")),
@@ -111,54 +114,32 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
     }
   }
 
-  // Query Firestore for matching inventory items
-  Future<void> fetchProductByCameraLabel(String detectedLabel) async {
-    if (_hasDetected) return;
-
-    try {
-      QuerySnapshot querySnapshot = await FirebaseFirestore.instance
-          .collection('Inventory')
-          .where('itemName', isEqualTo: detectedLabel)
-          .get();
-
-      if (querySnapshot.docs.isNotEmpty) {
-        _hasDetected = true;
-        _scannerController.stop();
-
-        var productDoc = querySnapshot.docs.first;
-        var data = productDoc.data() as Map<String, dynamic>;
-
-        await FirebaseFirestore.instance
-            .collection('Inventory')
-            .doc(productDoc.id)
-            .update({'stock': FieldValue.increment(-1)});
-
-        if (!mounted) return;
-
-        Navigator.pop(context, {
-          'id': productDoc.id,
-          'itemName': data['itemName'],
-          'price': data['price'],
-          'category': data['category'],
-        });
-      } else if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No item "$detectedLabel" found in Inventory.')),
-        );
-      }
-    } catch (e) {
-      debugPrint("Error querying Firestore: $e");
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Scan Product or Barcode", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: Text(_isAiMode ? "AI Name Scanner" : "Barcode Scanner", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: navyBlue,
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
+          // Toggle between AI Name Scan and Barcode Scan
+          TextButton.icon(
+            onPressed: () {
+              setState(() {
+                _isAiMode = !_isAiMode;
+                if (_isAiMode) {
+                  _scannerController.stop();
+                } else {
+                  _scannerController.start();
+                }
+              });
+            },
+            icon: Icon(_isAiMode ? Icons.qr_code_scanner : Icons.auto_awesome, color: tealAccent),
+            label: Text(
+              _isAiMode ? "Use Barcode" : "Use AI Scan",
+              style: TextStyle(color: tealAccent, fontWeight: FontWeight.bold),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.flash_on, color: Colors.white),
             onPressed: () => _scannerController.toggleTorch(),
@@ -168,63 +149,102 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       ),
       body: Stack(
         children: [
-          MobileScanner(
-            controller: _scannerController,
-            onDetect: (capture) {
-              if (_hasDetected || _isProcessingAi) return;
+          // If in Barcode mode, show live scanner stream. Otherwise show placeholder/guideline background.
+          if (!_isAiMode)
+            MobileScanner(
+              controller: _scannerController,
+              onDetect: (capture) {
+                if (_hasDetected || _isProcessingAi) return;
 
-              final List<Barcode> barcodes = capture.barcodes;
-              for (final barcode in barcodes) {
-                final String? code = barcode.rawValue;
-                if (code != null && code.isNotEmpty) {
-                  _hasDetected = true;
-                  _scannerController.stop();
-                  Navigator.pop(context, code);
-                  return;
+                final List<Barcode> barcodes = capture.barcodes;
+                for (final barcode in barcodes) {
+                  final String? code = barcode.rawValue;
+                  if (code != null && code.isNotEmpty) {
+                    _hasDetected = true;
+                    _scannerController.stop();
+                    Navigator.pop(context, code);
+                    return;
+                  }
                 }
-              }
-            },
-          ),
-          Positioned(
-            bottom: 40,
-            left: 20,
-            right: 20,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: navyBlue,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  onPressed: _isProcessingAi ? null : _captureAndAnalyzeWithGemini,
-                  icon: _isProcessingAi
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                        )
-                      : const Icon(Icons.center_focus_strong),
-                  label: Text(_isProcessingAi ? "Analyzing with Gemini..." : "Scan Item with Gemini AI"),
+              },
+            )
+          else
+            Container(
+              color: Colors.black,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.camera_enhance, color: tealAccent.withValues(alpha: 0.5), size: 80),
+                    const SizedBox(height: 20),
+                    const Text(
+                      "AI Name Scanner Ready",
+                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      "Tap the capture button below to identify item name",
+                      style: TextStyle(color: Colors.grey, fontSize: 13),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.black87,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Text(
-                    "Point camera at barcode for auto-scan, or tap AI Scan for item detection",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
-                  ),
-                ),
-              ],
+              ),
+            ),
+
+          // Targeting Viewfinder Box
+          Center(
+            child: Container(
+              width: 260,
+              height: 260,
+              decoration: BoxDecoration(
+                border: Border.all(color: tealAccent.withValues(alpha: 0.8), width: 2),
+                borderRadius: BorderRadius.circular(20),
+              ),
             ),
           ),
+
+          // Bottom Controls & Capture Button (Only active in AI Mode)
+          if (_isAiMode)
+            Positioned(
+              bottom: 40,
+              left: 20,
+              right: 20,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FloatingActionButton.extended(
+                    onPressed: _isProcessingAi ? null : _captureAndAnalyzeWithGemini,
+                    backgroundColor: tealAccent,
+                    foregroundColor: Colors.black,
+                    elevation: 4,
+                    icon: _isProcessingAi
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2),
+                          )
+                        : const Icon(Icons.camera_alt_rounded),
+                    label: Text(
+                      _isProcessingAi ? "Analyzing Name..." : "Capture & Identify Item",
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.8),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text(
+                      "Center the item in the box and tap capture. Switch to Barcode mode top-right if needed.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
