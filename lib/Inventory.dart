@@ -16,6 +16,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
   String _selectedStatusTab = 'All Items';
   String _selectedCategory = 'All Categories';
 
+  // --- GMAIL-STYLE MULTI-SELECT STATE ---
+  final Set<String> _selectedDocIds = {};
+  bool get _isMultiSelecting => _selectedDocIds.isNotEmpty;
+
   // Theme Colors
   final Color fbDarkBg = const Color(0xFF18191A);
   final Color fbCardBg = const Color(0xFF242526);
@@ -143,8 +147,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
   }
 
-  // --- SECURE MPIN VERIFICATION & DELETE ITEM ---
-  Future<void> _verifyAndDelete(String docId, String itemName) async {
+  // --- SECURE MPIN VERIFICATION & MULTI-DELETE ITEMS ---
+  Future<void> _verifyAndBatchDelete() async {
+    if (_selectedDocIds.isEmpty) return;
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
@@ -171,6 +176,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
       final TextEditingController mpinInputController = TextEditingController();
       bool isVerified = false;
+      int count = _selectedDocIds.length;
 
       await showDialog(
         context: context,
@@ -187,7 +193,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text("Enter your 4-digit MPIN to delete '$itemName':"),
+                Text("Enter your 4-digit MPIN to delete $count selected item(s):"),
                 const SizedBox(height: 15),
                 TextField(
                   controller: mpinInputController,
@@ -229,11 +235,20 @@ class _InventoryScreenState extends State<InventoryScreen> {
       );
 
       if (isVerified && mounted) {
-        await FirebaseFirestore.instance.collection('Inventory').doc(docId).delete();
-        _showSnackBar("Item deleted successfully", isError: false);
+        WriteBatch batch = FirebaseFirestore.instance.batch();
+        for (String docId in _selectedDocIds) {
+          DocumentReference docRef = FirebaseFirestore.instance.collection('Inventory').doc(docId);
+          batch.delete(docRef);
+        }
+        await batch.commit();
+
+        setState(() {
+          _selectedDocIds.clear();
+        });
+        _showSnackBar("Selected items deleted successfully", isError: false);
       }
     } catch (e) {
-      _showSnackBar("Error deleting item: $e", isError: true);
+      _showSnackBar("Error deleting items: $e", isError: true);
     }
   }
 
@@ -322,7 +337,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
         },
       );
 
-      // Once verified, loop to allow adding multiple items back-to-back without re-entering MPIN
       if (isVerified && mounted) {
         bool addMore = true;
         while (addMore && mounted) {
@@ -333,7 +347,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
           if (!mounted) break;
 
-          // Prompt user after finishing one item
           addMore = await showDialog<bool>(
                 context: context,
                 barrierDismissible: false,
@@ -414,9 +427,26 @@ class _InventoryScreenState extends State<InventoryScreen> {
     return Scaffold(
       backgroundColor: isDark ? fbDarkBg : navyBlue,
       appBar: AppBar(
-        title: const Text("Inventory Stocks", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: Text(
+          _isMultiSelecting ? "${_selectedDocIds.length} Selected" : "Inventory Stocks",
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
         backgroundColor: navyBlue,
         elevation: 0,
+        leading: _isMultiSelecting
+            ? IconButton(
+                icon: const Icon(Icons.close, color: Colors.white),
+                onPressed: () => setState(() => _selectedDocIds.clear()),
+              )
+            : null,
+        actions: [
+          if (_isMultiSelecting)
+            IconButton(
+              icon: const Icon(Icons.delete, color: Colors.redAccent),
+              tooltip: "Delete Selected",
+              onPressed: _verifyAndBatchDelete,
+            ),
+        ],
       ),
       body: Column(
         children: [
@@ -534,6 +564,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     itemBuilder: (context, index) {
                       var doc = docs[index];
                       var data = doc.data() as Map<String, dynamic>;
+                      bool isSelected = _selectedDocIds.contains(doc.id);
 
                       double price = (data['price'] as num?)?.toDouble() ?? 0.0;
                       double cost = (data['cost'] as num?)?.toDouble() ?? 0.0;
@@ -544,86 +575,122 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
                       Widget statusIcon = _buildStatusIcon(isOutOfStock ? 'Critical' : (data['status'] ?? 'In Stock'));
 
-                      return Card(
-                        color: isDark ? fbCardBg : Colors.white,
-                        margin: const EdgeInsets.only(bottom: 15),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(15),
-                          side: isOutOfStock ? const BorderSide(color: Colors.redAccent, width: 1.5) : BorderSide.none,
-                        ),
-                        child: Column(
-                          children: [
-                            Opacity(
-                              opacity: isOutOfStock ? 0.4 : 1.0,
-                              child: ListTile(
-                                leading: _buildProductThumbnail(imagePath, statusIcon),
-                                title: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        data['itemName'] ?? 'Product',
-                                        style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black),
-                                      ),
-                                    ),
-                                    if (isOutOfStock)
-                                      const Text("OUT OF STOCK", style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold)),
-                                  ],
-                                ),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text("Stock: $currentStock | ${data['category'] ?? 'General'}", style: TextStyle(color: isDark ? fbTextGrey : Colors.black54)),
-                                    Text("Barcode: ${data['barcode'] ?? 'N/A'}", style: TextStyle(color: isDark ? tealAccent : navyBlue, fontSize: 11, fontWeight: FontWeight.w500)),
-                                    Text("Capital: ₱${cost.toStringAsFixed(2)}", style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-                                  ],
-                                ),
-                                trailing: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    Text("₱${price.toStringAsFixed(2)}", style: TextStyle(color: isDark ? tealAccent : navyBlue, fontWeight: FontWeight.bold, fontSize: 16)),
-                                    Text("Profit: +₱${margin.toStringAsFixed(2)}", style: const TextStyle(color: Colors.green, fontSize: 11, fontWeight: FontWeight.bold)),
-                                  ],
-                                ),
-                              ),
-                            ),
-
-                            Padding(
-                              padding: const EdgeInsets.only(right: 12, bottom: 12, left: 12),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 22),
-                                    onPressed: () => _verifyAndDelete(doc.id, data['itemName'] ?? 'Item'),
-                                    tooltip: "Delete Item",
-                                  ),
-                                  Container(
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(8),
-                                      boxShadow: isOutOfStock ? [
-                                        BoxShadow(
-                                          color: Colors.redAccent.withValues(alpha: 0.7),
-                                          blurRadius: 12,
-                                          spreadRadius: 1,
+                      return GestureDetector(
+                        onLongPress: () {
+                          setState(() {
+                            if (isSelected) {
+                              _selectedDocIds.remove(doc.id);
+                            } else {
+                              _selectedDocIds.add(doc.id);
+                            }
+                          });
+                        },
+                        child: Card(
+                          color: isSelected 
+                              ? (isDark ? Colors.teal.shade900.withValues(alpha: 0.4) : Colors.teal.shade50)
+                              : (isDark ? fbCardBg : Colors.white),
+                          margin: const EdgeInsets.only(bottom: 15),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(15),
+                            side: isSelected
+                                ? BorderSide(color: tealAccent, width: 2)
+                                : (isOutOfStock ? const BorderSide(color: Colors.redAccent, width: 1.5) : BorderSide.none),
+                          ),
+                          child: Column(
+                            children: [
+                              Opacity(
+                                opacity: isOutOfStock ? 0.4 : 1.0,
+                                child: ListTile(
+                                  leading: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (_isMultiSelecting)
+                                        Checkbox(
+                                          value: isSelected,
+                                          activeColor: tealAccent,
+                                          onChanged: (bool? value) {
+                                            setState(() {
+                                              if (value == true) {
+                                                _selectedDocIds.add(doc.id);
+                                              } else {
+                                                _selectedDocIds.remove(doc.id);
+                                              }
+                                            });
+                                          },
                                         ),
-                                      ] : [],
-                                    ),
-                                    child: ElevatedButton.icon(
-                                      onPressed: () => _verifyAndRestock(data, doc.id),
-                                      icon: const Icon(Icons.add_business, size: 16, color: Colors.white),
-                                      label: const Text("RESTOCK", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: isOutOfStock ? Colors.redAccent : tealAccent,
-                                        elevation: isOutOfStock ? 0 : 2,
-                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                      _buildProductThumbnail(imagePath, statusIcon),
+                                    ],
+                                  ),
+                                  title: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          data['itemName'] ?? 'Product',
+                                          style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black),
+                                        ),
+                                      ),
+                                      if (isOutOfStock)
+                                        const Text("OUT OF STOCK", style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold)),
+                                    ],
+                                  ),
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text("Stock: $currentStock | ${data['category'] ?? 'General'}", style: TextStyle(color: isDark ? fbTextGrey : Colors.black54)),
+                                      Text("Barcode: ${data['barcode'] ?? 'N/A'}", style: TextStyle(color: isDark ? tealAccent : navyBlue, fontSize: 11, fontWeight: FontWeight.w500)),
+                                      Text("Capital/Unit: ₱${cost.toStringAsFixed(2)}", style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+                                    ],
+                                  ),
+                                  trailing: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Text("₱${price.toStringAsFixed(2)}", style: TextStyle(color: isDark ? tealAccent : navyBlue, fontWeight: FontWeight.bold, fontSize: 16)),
+                                      Text(
+                                        "Profit: ${margin >= 0 ? '+' : ''}₱${margin.toStringAsFixed(2)}",
+                                        style: TextStyle(
+                                          color: margin >= 0 ? Colors.green : Colors.redAccent,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+
+                              Padding(
+                                padding: const EdgeInsets.only(right: 12, bottom: 12, left: 12),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.start,
+                                  children: [
+                                    Container(
+                                      decoration: BoxDecoration(
+                                        borderRadius: BorderRadius.circular(8),
+                                        boxShadow: isOutOfStock ? [
+                                          BoxShadow(
+                                            color: Colors.redAccent.withValues(alpha: 0.7),
+                                            blurRadius: 12,
+                                            spreadRadius: 1,
+                                          ),
+                                        ] : [],
+                                      ),
+                                      child: ElevatedButton.icon(
+                                        onPressed: () => _verifyAndRestock(data, doc.id),
+                                        icon: const Icon(Icons.add_business, size: 16, color: Colors.white),
+                                        label: const Text("RESTOCK", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: isOutOfStock ? Colors.redAccent : tealAccent,
+                                          elevation: isOutOfStock ? 0 : 2,
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       );
                     },

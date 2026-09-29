@@ -245,6 +245,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       const SizedBox(height: 24),
                       _buildItemVelocitySection(isDark),
                       const SizedBox(height: 24),
+                      _buildTopItemsLeaderboard(isDark), // SUGGESTION #3: Top 5 Leaderboard
+                      const SizedBox(height: 24),
+                      _buildInventoryValuationCard(isDark), // SUGGESTION #5: Inventory Valuation Overview
+                      const SizedBox(height: 24),
                       _buildHeader("Revenue Trend (Benta)", isDark),
                       _buildBarChart(bentaData, isDark),
                       const SizedBox(height: 24),
@@ -287,8 +291,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
         var topItem = docs.first.data() as Map<String, dynamic>;
         var slowItem = docs.last.data() as Map<String, dynamic>;
-        
-        // Correctly reversed list so slow movers show lowest sales first
         var slowMoversList = List<QueryDocumentSnapshot>.from(docs.reversed);
 
         return Column(
@@ -375,6 +377,153 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   ),
                 ),
               ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // SUGGESTION #3 IMPLEMENTATION: Top 5 Best-Selling Leaderboard
+  Widget _buildTopItemsLeaderboard(bool isDark) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('Inventory')
+          .where('userId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        var docs = List<QueryDocumentSnapshot>.from(snapshot.data!.docs);
+        docs.sort((a, b) {
+          var dataA = a.data() as Map<String, dynamic>;
+          var dataB = b.data() as Map<String, dynamic>;
+          int soldA = dataA.containsKey('totalSold') ? (dataA['totalSold'] as num).toInt() : 0;
+          int soldB = dataB.containsKey('totalSold') ? (dataB['totalSold'] as num).toInt() : 0;
+          return soldB.compareTo(soldA);
+        });
+
+        var topFive = docs.take(5).toList();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildHeader("Top 5 Best-Selling Items", isDark),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: isDark ? Colors.white10 : Colors.grey[200]!),
+              ),
+              child: Column(
+                children: List.generate(topFive.length, (index) {
+                  var data = topFive[index].data() as Map<String, dynamic>;
+                  String name = data['itemName'] ?? 'Unknown';
+                  int sold = (data['totalSold'] ?? 0).toInt();
+
+                  return Padding(
+                    padding: EdgeInsets.only(bottom: index == topFive.length - 1 ? 0 : 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 14,
+                              backgroundColor: navyBlue.withOpacity(0.15),
+                              child: Text("${index + 1}", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: navyBlue)),
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              name,
+                              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: isDark ? Colors.white : Colors.black87),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          "$sold sold",
+                          style: const TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // SUGGESTION #5 IMPLEMENTATION: Inventory Valuation Overview
+  Widget _buildInventoryValuationCard(bool isDark) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('Inventory')
+          .where('userId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        double totalCapital = 0;
+        double potentialRevenue = 0;
+
+        for (var doc in snapshot.data!.docs) {
+          var data = doc.data() as Map<String, dynamic>;
+          double cost = (data['cost'] ?? 0.0).toDouble();
+          double price = (data['price'] ?? 0.0).toDouble();
+          int stock = (data['stock'] ?? 0).toInt();
+
+          totalCapital += cost * stock;
+          potentialRevenue += price * stock;
+        }
+
+        double potentialProfit = potentialRevenue - totalCapital;
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildHeader("Inventory Valuation Overview", isDark),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: isDark ? Colors.white10 : Colors.grey[200]!),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("Total Capital Invested", style: TextStyle(color: Colors.grey, fontSize: 13)),
+                      Text("₱${totalCapital.toStringAsFixed(2)}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: isDark ? Colors.white : Colors.black87)),
+                    ],
+                  ),
+                  const Divider(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("Projected Total Sales", style: TextStyle(color: Colors.grey, fontSize: 13)),
+                      Text("₱${potentialRevenue.toStringAsFixed(2)}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: mintGreen)),
+                    ],
+                  ),
+                  const Divider(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("Projected Net Profit", style: TextStyle(color: Colors.grey, fontSize: 13)),
+                      Text("+₱${potentialProfit.toStringAsFixed(2)}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.green)),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ],
         );

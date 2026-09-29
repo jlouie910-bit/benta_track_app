@@ -17,25 +17,26 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
   final _formKeyStep2 = GlobalKey<FormState>();
 
   final TextEditingController _storeNameController = TextEditingController();
+  final TextEditingController _customCategoryController = TextEditingController();
   final TextEditingController _mpinController = TextEditingController();
   final TextEditingController _confirmMpinController = TextEditingController();
 
   String _selectedCategory = 'Retail';
   bool _isLoading = false;
 
-  final Color tealAccent = const Color(0xFF4FD1C5);
+  // Updated to Dark Blue / Navy theme
+  final Color navyBlue = const Color(0xFF1E3A5F);
+  final Color cardDarkBg = const Color(0xFF242526);
 
   final List<String> _categories = [
     'Retail',
-    'Food & Beverage',
-    'Services',
-    'Clothing',
-    'Others'
+    'Others',
   ];
 
   @override
   void dispose() {
     _storeNameController.dispose();
+    _customCategoryController.dispose();
     _mpinController.dispose();
     _confirmMpinController.dispose();
     super.dispose();
@@ -60,6 +61,9 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
     try {
       final storeName = _storeNameController.text.trim();
       final mpin = _mpinController.text.trim();
+      final finalCategory = _selectedCategory == 'Others' 
+          ? _customCategoryController.text.trim() 
+          : _selectedCategory;
 
       // 1. Update Firebase Auth Display Name
       await user.updateDisplayName(storeName);
@@ -68,7 +72,7 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
       // 2. Save store information and security MPIN to Firestore 'Users' collection
       await FirebaseFirestore.instance.collection('Users').doc(user.uid).set({
         'storeName': storeName,
-        'category': _selectedCategory,
+        'category': finalCategory,
         'email': user.email ?? '',
         'ownerName': storeName,
         'mpin': mpin,
@@ -123,10 +127,11 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: tealAccent.withValues(alpha: 0.1),
+              color: navyBlue.withValues(alpha: 0.3),
               borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: navyBlue, width: 1),
             ),
-            child: Icon(Icons.storefront_rounded, color: tealAccent, size: 36),
+            child: Icon(Icons.storefront_rounded, color: Colors.white, size: 36),
           ),
           const SizedBox(height: 24),
           const Text(
@@ -160,7 +165,7 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
               hintText: "e.g., Aling Nena's Sari-Sari Store",
               hintStyle: const TextStyle(color: Colors.white24, fontSize: 14),
               filled: true,
-              fillColor: const Color(0xFF242526),
+              fillColor: cardDarkBg,
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -168,7 +173,7 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: tealAccent, width: 1.5),
+                borderSide: BorderSide(color: navyBlue, width: 1.5),
               ),
               errorBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -197,7 +202,7 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             decoration: BoxDecoration(
-              color: const Color(0xFF242526),
+              color: cardDarkBg,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.white10),
             ),
@@ -206,8 +211,8 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
                 value: _selectedCategory,
                 isExpanded: true,
                 style: const TextStyle(color: Colors.white, fontSize: 15),
-                dropdownColor: const Color(0xFF242526),
-                icon: Icon(Icons.keyboard_arrow_down_rounded, color: tealAccent),
+                dropdownColor: cardDarkBg,
+                icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white70),
                 items: _categories.map((String category) {
                   return DropdownMenuItem(
                     value: category,
@@ -222,6 +227,54 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
               ),
             ),
           ),
+
+          // Conditional Custom Input if "Others" is selected
+          if (_selectedCategory == 'Others') ...[
+            const SizedBox(height: 16),
+            const Text(
+              "Please Specify Business Type",
+              style: TextStyle(
+                color: Colors.white70,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _customCategoryController,
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              decoration: InputDecoration(
+                hintText: "e.g., General Merchandise, Hardware",
+                hintStyle: const TextStyle(color: Colors.white24, fontSize: 14),
+                filled: true,
+                fillColor: cardDarkBg,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Colors.white10),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: navyBlue, width: 1.5),
+                ),
+                errorBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Colors.redAccent, width: 1),
+                ),
+                focusedErrorBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
+                ),
+              ),
+              validator: (value) {
+                if (_selectedCategory == 'Others' && (value == null || value.trim().isEmpty)) {
+                  return "Please specify your business type";
+                }
+                return null;
+              },
+            ),
+          ],
+
           const SizedBox(height: 48),
           SizedBox(
             width: double.infinity,
@@ -229,8 +282,8 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
             child: ElevatedButton(
               onPressed: _proceedToMpinStep,
               style: ElevatedButton.styleFrom(
-                backgroundColor: tealAccent,
-                foregroundColor: Colors.black,
+                backgroundColor: navyBlue,
+                foregroundColor: Colors.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -263,11 +316,11 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.arrow_back_ios_rounded, color: tealAccent, size: 16),
+                const Icon(Icons.arrow_back_ios_rounded, color: Colors.white70, size: 16),
                 const SizedBox(width: 4),
-                Text(
+                const Text(
                   "Back to Store Info",
-                  style: TextStyle(color: tealAccent, fontSize: 14, fontWeight: FontWeight.w600),
+                  style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w600),
                 ),
               ],
             ),
@@ -276,10 +329,11 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: tealAccent.withValues(alpha: 0.1),
+              color: navyBlue.withValues(alpha: 0.3),
               borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: navyBlue, width: 1),
             ),
-            child: Icon(Icons.lock_rounded, color: tealAccent, size: 36),
+            child: const Icon(Icons.lock_rounded, color: Colors.white, size: 36),
           ),
           const SizedBox(height: 24),
           const Text(
@@ -318,7 +372,7 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
               hintText: "••••",
               hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 8),
               filled: true,
-              fillColor: const Color(0xFF242526),
+              fillColor: cardDarkBg,
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -326,7 +380,7 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: tealAccent, width: 1.5),
+                borderSide: BorderSide(color: navyBlue, width: 1.5),
               ),
             ),
             validator: (val) {
@@ -358,7 +412,7 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
               hintText: "••••",
               hintStyle: const TextStyle(color: Colors.white24, letterSpacing: 8),
               filled: true,
-              fillColor: const Color(0xFF242526),
+              fillColor: cardDarkBg,
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -366,7 +420,7 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: tealAccent, width: 1.5),
+                borderSide: BorderSide(color: navyBlue, width: 1.5),
               ),
             ),
             validator: (val) {
@@ -383,8 +437,8 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
             child: ElevatedButton(
               onPressed: _isLoading ? null : _completeSetup,
               style: ElevatedButton.styleFrom(
-                backgroundColor: tealAccent,
-                foregroundColor: Colors.black,
+                backgroundColor: navyBlue,
+                foregroundColor: Colors.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -395,7 +449,7 @@ class _WelcomeSetupScreenState extends State<WelcomeSetupScreen> {
                       height: 22,
                       width: 22,
                       child: CircularProgressIndicator(
-                        color: Colors.black,
+                        color: Colors.white,
                         strokeWidth: 2.5,
                       ),
                     )

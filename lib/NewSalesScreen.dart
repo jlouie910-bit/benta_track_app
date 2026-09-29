@@ -14,43 +14,76 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
   final Color navyBlue = const Color(0xFF1E3A5F);
   final User? user = FirebaseAuth.instance.currentUser;
 
+  // Cart item schema: { id, name, price, cost, quantity, maxStock, isSellingAsPack, piecesPerPack, packPrice }
   final List<Map<String, dynamic>> _cartItems = [];
   double _totalAmount = 0.0;
 
   void _calculateTotal() {
     double total = 0;
     for (var item in _cartItems) {
-      total += (item['price'] * item['quantity']);
+      bool asPack = item['isSellingAsPack'] ?? false;
+      int pieces = item['piecesPerPack'] ?? 1;
+      double effectivePrice = asPack ? (item['price'] * pieces) : item['price'];
+      total += (effectivePrice * item['quantity']);
     }
     setState(() => _totalAmount = total);
   }
 
-  void _addItemToCart(String id, String name, double price, double cost, int stock, int quantityToAdd, {bool isPack = false, int piecesPerPack = 1}) {
+  void _addItemToCart({
+    required String id,
+    required String name,
+    required double piecePrice,
+    required double pieceCost,
+    required int stock,
+    required int quantityToAdd,
+    required int piecesPerPack,
+    bool isSellingAsPack = false,
+  }) {
     if (stock <= 0 || quantityToAdd <= 0) return;
 
-    double effectiveCost = cost;
-    if (isPack && piecesPerPack > 0) {
-      effectiveCost = cost / piecesPerPack;
-    }
-
     setState(() {
-      int index = _cartItems.indexWhere((item) => item['id'] == id);
+      int index = _cartItems.indexWhere((item) => item['id'] == id && item['isSellingAsPack'] == isSellingAsPack);
+      
+      int requiredStockUnits = isSellingAsPack ? (quantityToAdd * piecesPerPack) : quantityToAdd;
+
       if (index != -1) {
-        int newQty = _cartItems[index]['quantity'] + quantityToAdd;
-        if (newQty <= stock) {
+        int existingQty = _cartItems[index]['quantity'];
+        int newQty = existingQty + quantityToAdd;
+        int requiredNewUnits = isSellingAsPack ? (newQty * piecesPerPack) : newQty;
+
+        if (requiredNewUnits <= stock) {
           _cartItems[index]['quantity'] = newQty;
         } else {
-          _cartItems[index]['quantity'] = stock;
+          // Max out based on stock availability
+          _cartItems[index]['quantity'] = isSellingAsPack ? (stock ~/ piecesPerPack) : stock;
         }
       } else {
-        _cartItems.add({
-          'id': id,
-          'name': name,
-          'price': price,
-          'cost': effectiveCost,
-          'quantity': quantityToAdd <= stock ? quantityToAdd : stock,
-          'maxStock': stock
-        });
+        if (requiredStockUnits <= stock) {
+          _cartItems.add({
+            'id': id,
+            'name': name,
+            'price': piecePrice,
+            'cost': pieceCost,
+            'quantity': quantityToAdd,
+            'maxStock': stock,
+            'piecesPerPack': piecesPerPack,
+            'isSellingAsPack': isSellingAsPack,
+          });
+        } else {
+          int maxAllowed = isSellingAsPack ? (stock ~/ piecesPerPack) : stock;
+          if (maxAllowed > 0) {
+            _cartItems.add({
+              'id': id,
+              'name': name,
+              'price': piecePrice,
+              'cost': pieceCost,
+              'quantity': maxAllowed,
+              'maxStock': stock,
+              'piecesPerPack': piecesPerPack,
+              'isSellingAsPack': isSellingAsPack,
+            });
+          }
+        }
       }
       _calculateTotal();
     });
@@ -59,7 +92,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
   void _openMultiSelectSearchModal() async {
     if (user == null) return;
 
-    final Map<String, int> tempSelectedQuantities = {};
+    final Map<String, Map<String, dynamic>> tempSelections = {}; // docId -> {qty, isPack}
     String searchQuery = "";
 
     await showModalBottomSheet(
@@ -79,7 +112,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
               Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[400], borderRadius: BorderRadius.circular(2))),
               const SizedBox(height: 15),
               const Text("Search & Select Items", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const Text("Type to filter database items and check quantities", style: TextStyle(color: Colors.grey, fontSize: 12)),
+              const Text("Choose item quantity and selling mode (Piece vs Pack)", style: TextStyle(color: Colors.grey, fontSize: 12)),
               const SizedBox(height: 15),
               TextField(
                 decoration: InputDecoration(
@@ -130,55 +163,101 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                         final itemName = data['itemName'] ?? 'Unknown Item';
                         final price = (data['price'] as num?)?.toDouble() ?? 0.0;
                         final stock = (data['stock'] as num?)?.toInt() ?? 0;
+                        final piecesPerPack = (data['piecesPerPack'] as num?)?.toInt() ?? 1;
+                        bool hasPackOption = piecesPerPack > 1;
 
-                        bool isSelected = tempSelectedQuantities.containsKey(docId);
-                        int qty = tempSelectedQuantities[docId] ?? 1;
+                        bool isSelected = tempSelections.containsKey(docId);
+                        int qty = isSelected ? tempSelections[docId]!['qty'] : 1;
+                        bool isPackMode = isSelected ? tempSelections[docId]!['isPack'] : false;
+
+                        double displayPrice = isPackMode ? (price * piecesPerPack) : price;
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 10),
-                          child: ListTile(
-                            title: Text(itemName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle: Text("Price: ₱$price | Stock: $stock"),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
+                          child: Padding(
+                            padding: const EdgeInsets.all(10.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                if (isSelected) ...[
-                                  IconButton(
-                                    icon: const Icon(Icons.remove, size: 18),
-                                    onPressed: () {
-                                      setModalState(() {
-                                        if (qty > 1) {
-                                          tempSelectedQuantities[docId] = qty - 1;
-                                        } else {
-                                          tempSelectedQuantities.remove(docId);
-                                        }
-                                      });
-                                    },
-                                  ),
-                                  Text("$qty", style: const TextStyle(fontWeight: FontWeight.bold)),
-                                  IconButton(
-                                    icon: const Icon(Icons.add, size: 18),
-                                    onPressed: () {
-                                      setModalState(() {
-                                        if (qty < stock) {
-                                          tempSelectedQuantities[docId] = qty + 1;
-                                        }
-                                      });
-                                    },
-                                  ),
-                                ],
-                                Checkbox(
-                                  activeColor: navyBlue,
-                                  value: isSelected,
-                                  onChanged: (bool? value) {
-                                    setModalState(() {
-                                      if (value == true) {
-                                        tempSelectedQuantities[docId] = 1;
-                                      } else {
-                                        tempSelectedQuantities.remove(docId);
-                                      }
-                                    });
-                                  },
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Expanded(
+                                      child: Text(itemName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                    ),
+                                    Text("Stock: $stock pcs", style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                                  ],
+                                ),
+                                const SizedBox(height: 5),
+                                Text("Price: ₱${displayPrice.toStringAsFixed(2)} ${isPackMode ? '(Pack)' : '(Piece)'}", 
+                                  style: TextStyle(color: navyBlue, fontWeight: FontWeight.w600, fontSize: 13)),
+                                const SizedBox(height: 5),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    if (hasPackOption)
+                                      ChoiceChip(
+                                        label: Text(isPackMode ? "Selling: Pack ($piecesPerPack pcs)" : "Selling: Piece"),
+                                        selected: isPackMode,
+                                        selectedColor: Colors.teal.shade100,
+                                        onSelected: (val) {
+                                          setModalState(() {
+                                            if (isSelected) {
+                                              tempSelections[docId]!['isPack'] = val;
+                                            } else {
+                                              tempSelections[docId] = {'qty': 1, 'isPack': val};
+                                            }
+                                          });
+                                        },
+                                      )
+                                    else
+                                      const Text("Sold by Piece only", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                    
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (isSelected) ...[
+                                          IconButton(
+                                            icon: const Icon(Icons.remove, size: 18),
+                                            onPressed: () {
+                                              setModalState(() {
+                                                if (qty > 1) {
+                                                  tempSelections[docId]!['qty'] = qty - 1;
+                                                } else {
+                                                  tempSelections.remove(docId);
+                                                }
+                                              });
+                                            },
+                                          ),
+                                          Text("$qty", style: const TextStyle(fontWeight: FontWeight.bold)),
+                                          IconButton(
+                                            icon: const Icon(Icons.add, size: 18),
+                                            onPressed: () {
+                                              setModalState(() {
+                                                int maxLimit = isPackMode ? (stock ~/ piecesPerPack) : stock;
+                                                if (qty < maxLimit) {
+                                                  tempSelections[docId]!['qty'] = qty + 1;
+                                                }
+                                              });
+                                            },
+                                          ),
+                                        ],
+                                        Checkbox(
+                                          activeColor: navyBlue,
+                                          value: isSelected,
+                                          onChanged: (bool? value) {
+                                            setModalState(() {
+                                              if (value == true) {
+                                                tempSelections[docId] = {'qty': 1, 'isPack': false};
+                                              } else {
+                                                tempSelections.remove(docId);
+                                              }
+                                            });
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
@@ -211,24 +290,24 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                       onPressed: () async {
-                        if (tempSelectedQuantities.isEmpty) {
+                        if (tempSelections.isEmpty) {
                           Navigator.pop(context);
                           return;
                         }
 
-                        for (var entry in tempSelectedQuantities.entries) {
+                        for (var entry in tempSelections.entries) {
                           final docRef = await FirebaseFirestore.instance.collection('Inventory').doc(entry.key).get();
                           if (docRef.exists) {
                             final data = docRef.data() as Map<String, dynamic>;
                             _addItemToCart(
-                              entry.key,
-                              data['itemName'] ?? 'Unknown',
-                              (data['price'] as num?)?.toDouble() ?? 0.0,
-                              (data['cost'] as num?)?.toDouble() ?? 0.0,
-                              (data['stock'] as num?)?.toInt() ?? 0,
-                              entry.value,
-                              isPack: data['isPackItem'] ?? false,
+                              id: entry.key,
+                              name: data['itemName'] ?? 'Unknown',
+                              piecePrice: (data['price'] as num?)?.toDouble() ?? 0.0,
+                              pieceCost: (data['cost'] as num?)?.toDouble() ?? 0.0,
+                              stock: (data['stock'] as num?)?.toInt() ?? 0,
+                              quantityToAdd: entry.value['qty'],
                               piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
+                              isSellingAsPack: entry.value['isPack'],
                             );
                           }
                         }
@@ -271,54 +350,24 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         final doc = querySnapshot.docs.first;
         final data = doc.data();
         _addItemToCart(
-          doc.id, 
-          data['itemName'] ?? 'Unknown Item', 
-          (data['price'] as num?)?.toDouble() ?? 0.0, 
-          (data['cost'] as num?)?.toDouble() ?? 0.0, 
-          (data['stock'] as num?)?.toInt() ?? 0,
-          1,
-          isPack: data['isPackItem'] ?? false,
+          id: doc.id,
+          name: data['itemName'] ?? 'Unknown Item',
+          piecePrice: (data['price'] as num?)?.toDouble() ?? 0.0,
+          pieceCost: (data['cost'] as num?)?.toDouble() ?? 0.0,
+          stock: (data['stock'] as num?)?.toInt() ?? 0,
+          quantityToAdd: 1,
           piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
+          isSellingAsPack: false,
         );
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Added: ${data['itemName']}"), backgroundColor: Colors.green),
+          SnackBar(content: Text("Added piece: ${data['itemName']}"), backgroundColor: Colors.green),
         );
         return;
       }
 
-      var nameQuery = await firestore
-          .collection('Inventory')
-          .where('userId', isEqualTo: user?.uid)
-          .get();
-
-      final matchedDocs = nameQuery.docs.where((doc) {
-        final data = doc.data();
-        final itemName = (data['itemName'] ?? '').toString().toLowerCase();
-        return itemName.contains(scannedResult.toLowerCase());
-      }).toList();
-
-      if (matchedDocs.isNotEmpty) {
-        final doc = matchedDocs.first;
-        final data = doc.data();
-        _addItemToCart(
-          doc.id, 
-          data['itemName'] ?? 'Unknown Item', 
-          (data['price'] as num?)?.toDouble() ?? 0.0, 
-          (data['cost'] as num?)?.toDouble() ?? 0.0, 
-          (data['stock'] as num?)?.toInt() ?? 0,
-          1,
-          isPack: data['isPackItem'] ?? false,
-          piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
-        );
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Added: ${data['itemName']}"), backgroundColor: Colors.green),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Item not found in database: $scannedResult"), backgroundColor: Colors.redAccent),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Item not found for barcode: $scannedResult"), backgroundColor: Colors.redAccent),
+      );
     }
   }
 
@@ -347,13 +396,17 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                 itemCount: _cartItems.length,
                 itemBuilder: (context, i) {
                   final item = _cartItems[i];
+                  bool isPack = item['isSellingAsPack'] ?? false;
+                  int pieces = item['piecesPerPack'] ?? 1;
+                  double linePrice = isPack ? (item['price'] * pieces * item['quantity']) : (item['price'] * item['quantity']);
+
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text("${item['quantity']}x ${item['name']}"),
-                        Text("₱${(item['price'] * item['quantity']).toStringAsFixed(2)}"),
+                        Text("${item['quantity']}x ${item['name']} ${isPack ? '(Pack)' : '(Piece)'}"),
+                        Text("₱${linePrice.toStringAsFixed(2)}"),
                       ],
                     ),
                   );
@@ -421,12 +474,23 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
             : 0;
 
         int requestedQty = (item['quantity'] as num).toInt();
-        int newStock = currentStock - requestedQty;
-        int newTotalSold = currentTotalSold + requestedQty;
+        bool isPack = item['isSellingAsPack'] ?? false;
+        int piecesPerPack = item['piecesPerPack'] ?? 1;
 
-        double itemPrice = (item['price'] as num).toDouble();
-        double itemCost = (item['cost'] as num).toDouble();
-        totalProfit += (itemPrice - itemCost) * requestedQty;
+        // If sold as pack, subtract total individual pieces (qty * piecesPerPack)
+        int unitsToSubtract = isPack ? (requestedQty * piecesPerPack) : requestedQty;
+        int newStock = currentStock - unitsToSubtract;
+        int newTotalSold = currentTotalSold + unitsToSubtract;
+
+        double piecePrice = (item['price'] as num).toDouble();
+        double pieceCost = (item['cost'] as num).toDouble();
+
+        // Profit calculation based on actual total pieces sold
+        double itemProfit = isPack 
+            ? ((piecePrice * piecesPerPack) - (pieceCost * piecesPerPack)) * requestedQty
+            : (piecePrice - pieceCost) * requestedQty;
+
+        totalProfit += itemProfit;
 
         int estimatedTotalVolume = currentStock + currentTotalSold;
         double percentageSold = estimatedTotalVolume > 0 ? (newTotalSold / estimatedTotalVolume) : 0.0;
@@ -449,9 +513,9 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
 
       final cleanCartItems = _cartItems.map((item) => {
         'id': item['id'],
-        'name': item['name'],
-        'price': item['price'],
-        'cost': item['cost'],
+        'name': "${item['name']} ${item['isSellingAsPack'] == true ? '(Pack)' : '(Piece)'}",
+        'price': item['isSellingAsPack'] == true ? (item['price'] * item['piecesPerPack']) : item['price'],
+        'cost': item['isSellingAsPack'] == true ? (item['cost'] * item['piecesPerPack']) : item['cost'],
         'quantity': item['quantity'],
       }).toList();
 
@@ -472,7 +536,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         _totalAmount = 0.0;
       });
 
-      messenger.showSnackBar(const SnackBar(content: Text("Checkout Successful! Inventory & Velocity Updated."), backgroundColor: Colors.green));
+      messenger.showSnackBar(const SnackBar(content: Text("Checkout Successful! Stock & Profit Calculated Correctly."), backgroundColor: Colors.green));
     } catch (e) {
       if (navigator.canPop()) navigator.pop();
       messenger.showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
@@ -535,12 +599,16 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
 
   Widget _buildCartItem(int index, bool isDark) {
     final item = _cartItems[index];
+    bool isPack = item['isSellingAsPack'] ?? false;
+    int pieces = item['piecesPerPack'] ?? 1;
+    double displayPrice = isPack ? (item['price'] * pieces) : item['price'];
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
       color: isDark ? const Color(0xFF242526) : Colors.white,
       child: ListTile(
-        title: Text(item['name'], style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text("₱${item['price']} each"),
+        title: Text("${item['name']} ${isPack ? '(Pack)' : '(Piece)'}", style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text("₱${displayPrice.toStringAsFixed(2)} each"),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -555,7 +623,8 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
             IconButton(
                 icon: const Icon(Icons.add_circle_outline, color: Colors.green),
                 onPressed: () => setState(() {
-                  if (item['quantity'] < item['maxStock']) {
+                  int maxLimit = isPack ? (item['maxStock'] ~/ pieces) : item['maxStock'];
+                  if (item['quantity'] < maxLimit) {
                     item['quantity']++;
                     _calculateTotal();
                   } else {
