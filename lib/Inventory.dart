@@ -46,6 +46,42 @@ class _InventoryScreenState extends State<InventoryScreen> {
         .snapshots();
   }
 
+  /// Calculates dynamic status based on sales velocity (how fast items are sold)
+  String _calculateDynamicStatus(Map<String, dynamic> data) {
+    int currentStock = (data['stock'] as num?)?.toInt() ?? 0;
+    if (currentStock <= 0) return 'Critical';
+
+    int totalSold = (data['totalSold'] as num?)?.toInt() ?? 0;
+    Timestamp? createdAt = data['createdAt'] as Timestamp?;
+
+    // If newly added or never sold, rely strictly on physical stock rules instead of velocity
+    if (totalSold == 0 || createdAt == null) {
+      if (currentStock <= 5) return 'Critical';
+      if (currentStock <= 10) return 'Low Stock';
+      return 'In Stock';
+    }
+
+    DateTime createdDate = createdAt.toDate();
+    int daysActive = DateTime.now().difference(createdDate).inDays;
+    if (daysActive < 1) daysActive = 1;
+
+    double salesVelocityPerDay = totalSold / daysActive;
+    double estimatedDaysRemaining = currentStock / salesVelocityPerDay;
+
+    // Fast seller velocity check
+    if (salesVelocityPerDay >= 3.0 && estimatedDaysRemaining <= 3.0) {
+      return 'Critical';
+    } else if (salesVelocityPerDay >= 1.5 && estimatedDaysRemaining <= 7.0) {
+      return 'Low Stock';
+    } else if (currentStock <= 5) {
+      return 'Critical';
+    } else if (currentStock <= 10) {
+      return 'Low Stock';
+    }
+
+    return 'In Stock';
+  }
+
   // --- SECURE MPIN VERIFICATION FOR RESTOCK / EDIT ---
   Future<void> _verifyAndRestock(Map<String, dynamic> data, String docId) async {
     final user = FirebaseAuth.instance.currentUser;
@@ -545,8 +581,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     }
 
                     if (_selectedStatusTab != 'All Items') {
-                      final status = data['status'] ?? 'In Stock';
-                      if (status != _selectedStatusTab) {
+                      String calculatedStatus = _calculateDynamicStatus(data);
+                      if (calculatedStatus != _selectedStatusTab) {
                         return false;
                       }
                     }
@@ -573,7 +609,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       bool isOutOfStock = currentStock <= 0;
                       String? imagePath = data['imagePath'] ?? data['imageUrl'];
 
-                      Widget statusIcon = _buildStatusIcon(isOutOfStock ? 'Critical' : (data['status'] ?? 'In Stock'));
+                      String effectiveStatus = _calculateDynamicStatus(data);
+                      Widget statusIcon = _buildStatusIcon(effectiveStatus);
 
                       return GestureDetector(
                         onLongPress: () {
@@ -594,7 +631,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                             borderRadius: BorderRadius.circular(15),
                             side: isSelected
                                 ? BorderSide(color: tealAccent, width: 2)
-                                : (isOutOfStock ? const BorderSide(color: Colors.redAccent, width: 1.5) : BorderSide.none),
+                                : (effectiveStatus == 'Critical' ? const BorderSide(color: Colors.redAccent, width: 1.5) : BorderSide.none),
                           ),
                           child: Column(
                             children: [
@@ -629,8 +666,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                           style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black),
                                         ),
                                       ),
-                                      if (isOutOfStock)
-                                        const Text("OUT OF STOCK", style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold)),
+                                      if (effectiveStatus == 'Critical' && !isOutOfStock)
+                                        const Text("FAST SELLER (CRITICAL)", style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold)),
                                     ],
                                   ),
                                   subtitle: Column(
@@ -667,7 +704,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                     Container(
                                       decoration: BoxDecoration(
                                         borderRadius: BorderRadius.circular(8),
-                                        boxShadow: isOutOfStock ? [
+                                        boxShadow: effectiveStatus == 'Critical' ? [
                                           BoxShadow(
                                             color: Colors.redAccent.withValues(alpha: 0.7),
                                             blurRadius: 12,
@@ -680,8 +717,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                         icon: const Icon(Icons.add_business, size: 16, color: Colors.white),
                                         label: const Text("RESTOCK", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
                                         style: ElevatedButton.styleFrom(
-                                          backgroundColor: isOutOfStock ? Colors.redAccent : tealAccent,
-                                          elevation: isOutOfStock ? 0 : 2,
+                                          backgroundColor: effectiveStatus == 'Critical' ? Colors.redAccent : tealAccent,
+                                          elevation: effectiveStatus == 'Critical' ? 0 : 2,
                                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                         ),
                                       ),

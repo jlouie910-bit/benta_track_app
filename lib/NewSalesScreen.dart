@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'Camera.dart';
@@ -14,7 +15,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
   final Color navyBlue = const Color(0xFF1E3A5F);
   final User? user = FirebaseAuth.instance.currentUser;
 
-  // Cart item schema: { id, name, price, cost, quantity, maxStock, isSellingAsPack, piecesPerPack, packPrice }
+  // Cart item schema: { id, name, price, cost, quantity, maxStock, isSellingAsPack, piecesPerPack }
   final List<Map<String, dynamic>> _cartItems = [];
   double _totalAmount = 0.0;
 
@@ -23,7 +24,8 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     for (var item in _cartItems) {
       bool asPack = item['isSellingAsPack'] ?? false;
       int pieces = item['piecesPerPack'] ?? 1;
-      double effectivePrice = asPack ? (item['price'] * pieces) : item['price'];
+      double piecePrice = item['price'] ?? 0.0;
+      double effectivePrice = asPack ? (piecePrice * pieces) : piecePrice;
       total += (effectivePrice * item['quantity']);
     }
     setState(() => _totalAmount = total);
@@ -54,7 +56,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         if (requiredNewUnits <= stock) {
           _cartItems[index]['quantity'] = newQty;
         } else {
-          // Max out based on stock availability
           _cartItems[index]['quantity'] = isSellingAsPack ? (stock ~/ piecesPerPack) : stock;
         }
       } else {
@@ -89,10 +90,72 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     });
   }
 
+  // --- MANUAL QUANTITY INPUT DIALOG ---
+  Future<void> _showManualQuantityDialog(
+    BuildContext context, 
+    String docId, 
+    int currentQty, 
+    int maxLimit, 
+    StateSetter setModalState
+  ) async {
+    final TextEditingController qtyController = TextEditingController(text: currentQty.toString());
+
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Enter Quantity", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        content: TextField(
+          controller: qtyController,
+          keyboardType: TextInputType.number,
+          autofocus: true,
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: InputDecoration(
+            hintText: "Max: $maxLimit",
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: navyBlue),
+            onPressed: () {
+              int? parsedQty = int.tryParse(qtyController.text.trim());
+              if (parsedQty != null && parsedQty > 0) {
+                if (parsedQty <= maxLimit) {
+                  setModalState(() {
+                    if (docId.isNotEmpty) {
+                      // Modal state update
+                      // handled outside or mapped
+                    }
+                  });
+                }
+              }
+              Navigator.pop(context);
+            },
+            child: const Text("OK", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    // Re-assign back to map if valid from dialog result
+    int? parsed = int.tryParse(qtyController.text.trim());
+    if (parsed != null && parsed > 0) {
+      setModalState(() {
+        if (parsed <= maxLimit) {
+          // If updated via tempSelections map reference passed down
+        }
+      });
+    }
+  }
+
   void _openMultiSelectSearchModal() async {
     if (user == null) return;
 
-    final Map<String, Map<String, dynamic>> tempSelections = {}; // docId -> {qty, isPack}
+    final Map<String, Map<String, dynamic>> tempSelections = {}; 
     String searchQuery = "";
 
     await showModalBottomSheet(
@@ -171,6 +234,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                         bool isPackMode = isSelected ? tempSelections[docId]!['isPack'] : false;
 
                         double displayPrice = isPackMode ? (price * piecesPerPack) : price;
+                        int maxLimit = isPackMode ? (stock ~/ piecesPerPack) : stock;
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 10),
@@ -229,12 +293,65 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                                               });
                                             },
                                           ),
-                                          Text("$qty", style: const TextStyle(fontWeight: FontWeight.bold)),
+                                          // --- CLICKABLE QUANTITY TEXT FOR MANUAL INPUT ---
+                                          InkWell(
+                                            onTap: () async {
+                                              final TextEditingController manualController = TextEditingController(text: qty.toString());
+                                              await showDialog(
+                                                context: context,
+                                                builder: (context) => AlertDialog(
+                                                  title: const Text("Enter Quantity", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                                  content: TextField(
+                                                    controller: manualController,
+                                                    keyboardType: TextInputType.number,
+                                                    autofocus: true,
+                                                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                                    decoration: InputDecoration(
+                                                      hintText: "Max: $maxLimit",
+                                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                                    ),
+                                                  ),
+                                                  actions: [
+                                                    TextButton(
+                                                      onPressed: () => Navigator.pop(context),
+                                                      child: const Text("Cancel"),
+                                                    ),
+                                                    ElevatedButton(
+                                                      style: ElevatedButton.styleFrom(backgroundColor: navyBlue),
+                                                      onPressed: () {
+                                                        int? enteredVal = int.tryParse(manualController.text.trim());
+                                                        if (enteredVal != null && enteredVal > 0) {
+                                                          if (enteredVal <= maxLimit) {
+                                                            setModalState(() {
+                                                              tempSelections[docId]!['qty'] = enteredVal;
+                                                            });
+                                                          } else {
+                                                            ScaffoldMessenger.of(context).showSnackBar(
+                                                              const SnackBar(content: Text("Exceeds available stock limit!"), backgroundColor: Colors.red),
+                                                            );
+                                                          }
+                                                        }
+                                                        Navigator.pop(context);
+                                                      },
+                                                      child: const Text("OK", style: TextStyle(color: Colors.white)),
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            },
+                                            child: Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                              decoration: BoxDecoration(
+                                                border: Border.all(color: Colors.grey.shade400),
+                                                borderRadius: BorderRadius.circular(6),
+                                              ),
+                                              child: Text("$qty", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                            ),
+                                          ),
                                           IconButton(
                                             icon: const Icon(Icons.add, size: 18),
                                             onPressed: () {
                                               setModalState(() {
-                                                int maxLimit = isPackMode ? (stock ~/ piecesPerPack) : stock;
                                                 if (qty < maxLimit) {
                                                   tempSelections[docId]!['qty'] = qty + 1;
                                                 }
@@ -398,7 +515,8 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                   final item = _cartItems[i];
                   bool isPack = item['isSellingAsPack'] ?? false;
                   int pieces = item['piecesPerPack'] ?? 1;
-                  double linePrice = isPack ? (item['price'] * pieces * item['quantity']) : (item['price'] * item['quantity']);
+                  double basePrice = item['price'] ?? 0.0;
+                  double linePrice = isPack ? (basePrice * pieces * item['quantity']) : (basePrice * item['quantity']);
 
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
@@ -477,7 +595,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         bool isPack = item['isSellingAsPack'] ?? false;
         int piecesPerPack = item['piecesPerPack'] ?? 1;
 
-        // If sold as pack, subtract total individual pieces (qty * piecesPerPack)
         int unitsToSubtract = isPack ? (requestedQty * piecesPerPack) : requestedQty;
         int newStock = currentStock - unitsToSubtract;
         int newTotalSold = currentTotalSold + unitsToSubtract;
@@ -485,7 +602,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         double piecePrice = (item['price'] as num).toDouble();
         double pieceCost = (item['cost'] as num).toDouble();
 
-        // Profit calculation based on actual total pieces sold
         double itemProfit = isPack 
             ? ((piecePrice * piecesPerPack) - (pieceCost * piecesPerPack)) * requestedQty
             : (piecePrice - pieceCost) * requestedQty;
@@ -601,36 +717,78 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     final item = _cartItems[index];
     bool isPack = item['isSellingAsPack'] ?? false;
     int pieces = item['piecesPerPack'] ?? 1;
-    double displayPrice = isPack ? (item['price'] * pieces) : item['price'];
+    double basePrice = item['price'] ?? 0.0;
+    double displayPrice = isPack ? (basePrice * pieces) : basePrice;
+    bool hasPackOption = pieces > 1;
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 5),
+      margin: const EdgeInsets.symmetric(horizontal: 15, vertical: 6),
       color: isDark ? const Color(0xFF242526) : Colors.white,
-      child: ListTile(
-        title: Text("${item['name']} ${isPack ? '(Pack)' : '(Piece)'}", style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text("₱${displayPrice.toStringAsFixed(2)} each"),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            IconButton(
-                icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
-                onPressed: () => setState(() {
-                  if (item['quantity'] > 1) item['quantity']--;
-                  else _cartItems.removeAt(index);
-                  _calculateTotal();
-                })),
-            Text("${item['quantity']}", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            IconButton(
-                icon: const Icon(Icons.add_circle_outline, color: Colors.green),
-                onPressed: () => setState(() {
-                  int maxLimit = isPack ? (item['maxStock'] ~/ pieces) : item['maxStock'];
-                  if (item['quantity'] < maxLimit) {
-                    item['quantity']++;
-                    _calculateTotal();
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cannot exceed available stock!")));
-                  }
-                })),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Text("${item['name']}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+                Text("₱${displayPrice.toStringAsFixed(2)} each", style: TextStyle(color: navyBlue, fontWeight: FontWeight.w600)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (hasPackOption)
+                  ChoiceChip(
+                    label: Text(isPack ? "Selling: Pack ($pieces pcs)" : "Selling: Piece"),
+                    selected: isPack,
+                    selectedColor: Colors.teal.shade100,
+                    onSelected: (bool selected) {
+                      setState(() {
+                        item['isSellingAsPack'] = selected;
+                        item['quantity'] = 1; 
+                        _calculateTotal();
+                      });
+                    },
+                  )
+                else
+                  const Text("Sold by Piece only", style: TextStyle(fontSize: 12, color: Colors.grey)),
+
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline, color: Colors.red, size: 22),
+                      onPressed: () => setState(() {
+                        if (item['quantity'] > 1) {
+                          item['quantity']--;
+                        } else {
+                          _cartItems.removeAt(index);
+                        }
+                        _calculateTotal();
+                      }),
+                    ),
+                    Text("${item['quantity']}", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    IconButton(
+                      icon: const Icon(Icons.add_circle_outline, color: Colors.green, size: 22),
+                      onPressed: () => setState(() {
+                        int maxLimit = isPack ? (item['maxStock'] ~/ pieces) : item['maxStock'];
+                        if (item['quantity'] < maxLimit) {
+                          item['quantity']++;
+                          _calculateTotal();
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cannot exceed available stock!")));
+                        }
+                      }),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ],
         ),
       ),

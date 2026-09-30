@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -25,7 +24,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
   final TextEditingController _sellingPriceController = TextEditingController();
 
   String _selectedCategory = 'Food Products & Staples';
-  bool _isTingiMode = true; // Default enabled for items like cigarettes sold per piece
+  bool _isTingiMode = true; 
   String? _imagePath;
   bool _isLoading = false;
 
@@ -50,7 +49,6 @@ class _AddItemScreenState extends State<AddItemScreen> {
       _barcodeController.text = data['barcode'] ?? '';
       _stockController.text = (data['stock'] ?? '').toString();
       
-      // Load total pack cost if stored, otherwise fallback to unit cost
       _packCostController.text = (data['totalPackCost'] ?? data['cost'] ?? '').toString();
       _piecesPerPackController.text = (data['piecesPerPack'] ?? 20).toString();
       _sellingPriceController.text = (data['price'] ?? '').toString();
@@ -87,7 +85,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
       final double inputCost = double.parse(_packCostController.text.trim());
       final int piecesPerPack = _isTingiMode ? int.parse(_piecesPerPackController.text.trim()) : 1;
       
-      // Calculate true unit cost per piece securely
+      // Fixed calculation: True individual piece cost derived from whole pack cost divided by pieces per pack
       final double unitCost = (_isTingiMode && piecesPerPack > 0) ? (inputCost / piecesPerPack) : inputCost;
       final double sellingPrice = double.parse(_sellingPriceController.text.trim());
 
@@ -103,10 +101,10 @@ class _AddItemScreenState extends State<AddItemScreen> {
         'itemName': itemName,
         'barcode': barcode,
         'stock': stock,
-        'cost': unitCost, // True cost per individual piece
-        'totalPackCost': inputCost, // Total cost paid for the whole pack/box
+        'cost': unitCost, 
+        'totalPackCost': _isTingiMode ? inputCost : 0.0, 
         'piecesPerPack': piecesPerPack,
-        'price': sellingPrice,
+        'price': sellingPrice, // Selling price per piece
         'category': _selectedCategory,
         'status': status,
         'imagePath': _imagePath ?? '',
@@ -217,7 +215,6 @@ class _AddItemScreenState extends State<AddItemScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // Tingi Toggle Switch
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
@@ -227,7 +224,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                   ),
                   child: SwitchListTile(
                     title: const Text("Bought in Pack, Sold by Piece (Tingi)", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-                    subtitle: const Text("Enable if bought in bulk packs and sold individually (e.g., Cigarettes)", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                    subtitle: const Text("Enable if bought in bulk packs and sold individually", style: TextStyle(fontSize: 11, color: Colors.grey)),
                     value: _isTingiMode,
                     activeColor: tealAccent,
                     onChanged: (val) => setState(() => _isTingiMode = val),
