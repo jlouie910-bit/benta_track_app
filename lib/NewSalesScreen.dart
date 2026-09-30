@@ -90,68 +90,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     });
   }
 
-  // --- MANUAL QUANTITY INPUT DIALOG ---
-  Future<void> _showManualQuantityDialog(
-    BuildContext context, 
-    String docId, 
-    int currentQty, 
-    int maxLimit, 
-    StateSetter setModalState
-  ) async {
-    final TextEditingController qtyController = TextEditingController(text: currentQty.toString());
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Enter Quantity", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        content: TextField(
-          controller: qtyController,
-          keyboardType: TextInputType.number,
-          autofocus: true,
-          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-          decoration: InputDecoration(
-            hintText: "Max: $maxLimit",
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: navyBlue),
-            onPressed: () {
-              int? parsedQty = int.tryParse(qtyController.text.trim());
-              if (parsedQty != null && parsedQty > 0) {
-                if (parsedQty <= maxLimit) {
-                  setModalState(() {
-                    if (docId.isNotEmpty) {
-                      // Modal state update
-                      // handled outside or mapped
-                    }
-                  });
-                }
-              }
-              Navigator.pop(context);
-            },
-            child: const Text("OK", style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    // Re-assign back to map if valid from dialog result
-    int? parsed = int.tryParse(qtyController.text.trim());
-    if (parsed != null && parsed > 0) {
-      setModalState(() {
-        if (parsed <= maxLimit) {
-          // If updated via tempSelections map reference passed down
-        }
-      });
-    }
-  }
-
   void _openMultiSelectSearchModal() async {
     if (user == null) return;
 
@@ -293,7 +231,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                                               });
                                             },
                                           ),
-                                          // --- CLICKABLE QUANTITY TEXT FOR MANUAL INPUT ---
                                           InkWell(
                                             onTap: () async {
                                               final TextEditingController manualController = TextEditingController(text: qty.toString());
