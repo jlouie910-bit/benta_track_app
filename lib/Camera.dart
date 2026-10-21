@@ -83,8 +83,8 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
         final Uint8List imageBytes = await imageFile.readAsBytes();
 
         final prompt = TextPart('''
-          Analyze this product image carefully.
-          Return ONLY the exact item name string as it appears in a store catalog (e.g., "cotton buds", "Coca Cola"). Keep it short and generic.
+          Analyze this retail product image carefully.
+          Return ONLY the exact item name string as it appears in a store catalog (e.g., "Marlboro Red", "Coca Cola", "Century Tuna"). Keep it clear and concise.
           If no retail product is identified clearly, return "UNKNOWN".
         ''');
 
@@ -96,11 +96,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
         final String detectedName = response.text?.trim() ?? 'UNKNOWN';
 
-        if (detectedName != 'UNKNOWN' && detectedName.isNotEmpty) {
+        if (detectedName != 'UNKNOWN' && detectedName.isNotEmpty && mounted) {
           _hasDetected = true;
-          if (mounted) {
-            Navigator.pop(context, detectedName);
-          }
+          Navigator.pop(context, detectedName);
         } else if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("Could not identify product. Try again.")),
@@ -118,7 +116,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isAiMode ? "AI Name Scanner" : "Barcode Scanner", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: Text(_isAiMode ? "AI Vision Assistant" : "Barcode Scanner", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         backgroundColor: navyBlue,
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
@@ -136,7 +134,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
             },
             icon: Icon(_isAiMode ? Icons.qr_code_scanner : Icons.auto_awesome, color: tealAccent),
             label: Text(
-              _isAiMode ? "Use Barcode" : "Use AI Scan",
+              _isAiMode ? "Use Barcode" : "Use AI Vision",
               style: TextStyle(color: tealAccent, fontWeight: FontWeight.bold),
             ),
           ),
@@ -149,7 +147,6 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
       ),
       body: Stack(
         children: [
-          // If in Barcode mode, show live scanner stream. Otherwise show placeholder/guideline background.
           if (!_isAiMode)
             MobileScanner(
               controller: _scannerController,
@@ -178,12 +175,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                     Icon(Icons.camera_enhance, color: tealAccent.withValues(alpha: 0.5), size: 80),
                     const SizedBox(height: 20),
                     const Text(
-                      "AI Name Scanner Ready",
+                      "AI Vision Assistant Ready",
                       style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      "Tap the capture button below to identify item name",
+                      "Center the item in the box and tap capture to identify",
                       style: TextStyle(color: Colors.grey, fontSize: 13),
                     ),
                   ],
@@ -225,7 +222,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                           )
                         : const Icon(Icons.camera_alt_rounded),
                     label: Text(
-                      _isProcessingAi ? "Analyzing Name..." : "Capture & Identify Item",
+                      _isProcessingAi ? "Analyzing with AI..." : "Capture & Identify Item",
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                     ),
                   ),

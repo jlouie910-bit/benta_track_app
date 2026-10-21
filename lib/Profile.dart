@@ -16,6 +16,9 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final User? user = FirebaseAuth.instance.currentUser;
+  
+  // Test variable for subscription tier popup preview ('Basic' or 'Premium')
+  String _currentSubscriptionTier = 'Basic'; 
 
   Future<void> _showLogoutDialog() async {
     return showDialog(
@@ -45,6 +48,127 @@ class _ProfileScreenState extends State<ProfileScreen> {
               ),
             ),
           ],
+        );
+      },
+    );
+  }
+
+  // --- PREMIUM SUBSCRIPTION POPUP DIALOG FOR TESTING ---
+  void _showSubscriptionModal() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final bool isDark = Theme.of(context).brightness == Brightness.dark;
+        const Color navyBlue = Color(0xFF1E3A5F);
+        const Color tealAccent = Color(0xFF4FD1C5);
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            backgroundColor: isDark ? const Color(0xFF242526) : Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(
+              children: [
+                Icon(Icons.workspace_premium, color: _currentSubscriptionTier == 'Premium' ? Colors.amber : navyBlue),
+                const SizedBox(width: 10),
+                const Text("Subscription Plan", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "Current Tier: $_currentSubscriptionTier",
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold, 
+                    color: _currentSubscriptionTier == 'Premium' ? Colors.amber.shade700 : tealAccent,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  "Select a tier for testing features & restrictions:",
+                  style: TextStyle(color: Colors.grey, fontSize: 13),
+                ),
+                const SizedBox(height: 15),
+
+                // BASIC TIER CARD
+                GestureDetector(
+                  onTap: () {
+                    setDialogState(() => _currentSubscriptionTier = 'Basic');
+                    setState(() {});
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _currentSubscriptionTier == 'Basic' ? tealAccent.withValues(alpha: 0.15) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _currentSubscriptionTier == 'Basic' ? tealAccent : Colors.grey.shade400,
+                        width: 2,
+                      ),
+                    ),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("Basic Plan (Free)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        SizedBox(height: 4),
+                        Text("• AI Chats: 10/day limit\n• Analytics: Unlimited use\n• Barcode/AI Scanner: 10 uses/day\n• Counter Checkout: 10 transactions/day",
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // PREMIUM TIER CARD
+                GestureDetector(
+                  onTap: () {
+                    setDialogState(() => _currentSubscriptionTier = 'Premium');
+                    setState(() {});
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: _currentSubscriptionTier == 'Premium' ? Colors.amber.withValues(alpha: 0.15) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: _currentSubscriptionTier == 'Premium' ? Colors.amber : Colors.grey.shade400,
+                        width: 2,
+                      ),
+                    ),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("Premium Plan (Pro)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                        SizedBox(height: 4),
+                        Text("• AI Chats: Unlimited 🚀\n• Analytics: Unlimited use\n• Barcode/AI Scanner: Unlimited use\n• Counter Checkout: Unlimited use",
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Close"),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: navyBlue),
+                onPressed: () {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Subscription updated to $_currentSubscriptionTier (Test Mode)"), backgroundColor: Colors.green),
+                  );
+                },
+                child: const Text("Save Tier", style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -115,7 +239,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 85),
 
             StreamBuilder<DocumentSnapshot>(
-              // FIXED: Changed collection from 'users' to 'Users'
               stream: FirebaseFirestore.instance.collection('Users').doc(user?.uid).snapshots(),
               builder: (context, snapshot) {
                 String displayName = user?.email ?? "Store Owner";
@@ -198,6 +321,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         MaterialPageRoute(builder: (context) => const StoreSettingsScreen()),
                       );
                     },
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // --- NEW SUBSCRIPTION SECTION ---
+                  _buildSectionHeader("Subscription", isDark),
+                  _buildProfileOption(
+                    isDark: isDark,
+                    icon: Icons.workspace_premium,
+                    title: "Subscription Plan",
+                    iconColor: Colors.amber,
+                    trailing: Text(
+                      _currentSubscriptionTier,
+                      style: TextStyle(
+                        color: _currentSubscriptionTier == 'Premium' ? Colors.amber.shade700 : Colors.teal,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    onTap: _showSubscriptionModal,
                   ),
 
                   const SizedBox(height: 10),

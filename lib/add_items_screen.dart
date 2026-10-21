@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'Camera.dart'; // Ensure this points to your camera scanner file
 
 class AddItemScreen extends StatefulWidget {
   final Map<String, dynamic>? initialData;
@@ -45,10 +46,11 @@ class _AddItemScreenState extends State<AddItemScreen> {
     super.initState();
     if (widget.initialData != null) {
       final data = widget.initialData!;
-      _itemNameController.text = data['itemName'] ?? '';
+      
+      // THIS IS THE KEY LINE: Ensure it checks for 'itemName'
+      _itemNameController.text = data['itemName'] ?? ''; 
       _barcodeController.text = data['barcode'] ?? '';
       _stockController.text = (data['stock'] ?? '').toString();
-      
       _packCostController.text = (data['totalPackCost'] ?? data['cost'] ?? '').toString();
       _piecesPerPackController.text = (data['piecesPerPack'] ?? 20).toString();
       _sellingPriceController.text = (data['price'] ?? '').toString();
@@ -69,6 +71,47 @@ class _AddItemScreenState extends State<AddItemScreen> {
     super.dispose();
   }
 
+  // --- LAUNCH CAMERA SCANNER TO AUTO-FILL ITEM DETAILS ---
+  Future<void> _scanAndAutoFill() async {
+    final scannedResult = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const CameraScreen()),
+    );
+
+    if (scannedResult != null && scannedResult is String && mounted) {
+      setState(() {
+        _barcodeController.text = scannedResult;
+      });
+
+      // Optional: Check if this barcode exists elsewhere in Firestore
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final query = await FirebaseFirestore.instance
+            .collection('Inventory')
+            .where('userId', isEqualTo: user.uid)
+            .where('barcode', isEqualTo: scannedResult)
+            .get();
+
+        if (query.docs.isNotEmpty) {
+          final existingData = query.docs.first.data();
+          setState(() {
+            _itemNameController.text = existingData['itemName'] ?? '';
+            _selectedCategory = existingData['category'] ?? _selectedCategory;
+            _packCostController.text = (existingData['totalPackCost'] ?? existingData['cost'] ?? '').toString();
+            _sellingPriceController.text = (existingData['price'] ?? '').toString();
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Existing item details auto-filled from barcode!"), backgroundColor: Colors.green),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Barcode scanned: $scannedResult. Fill in the remaining details."), backgroundColor: navyBlue),
+          );
+        }
+      }
+    }
+  }
+
   Future<void> _saveItem() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -85,7 +128,6 @@ class _AddItemScreenState extends State<AddItemScreen> {
       final double inputCost = double.parse(_packCostController.text.trim());
       final int piecesPerPack = _isTingiMode ? int.parse(_piecesPerPackController.text.trim()) : 1;
       
-      // Fixed calculation: True individual piece cost derived from whole pack cost divided by pieces per pack
       final double unitCost = (_isTingiMode && piecesPerPack > 0) ? (inputCost / piecesPerPack) : inputCost;
       final double sellingPrice = double.parse(_sellingPriceController.text.trim());
 
@@ -104,7 +146,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
         'cost': unitCost, 
         'totalPackCost': _isTingiMode ? inputCost : 0.0, 
         'piecesPerPack': piecesPerPack,
-        'price': sellingPrice, // Selling price per piece
+        'price': sellingPrice, 
         'category': _selectedCategory,
         'status': status,
         'imagePath': _imagePath ?? '',
@@ -147,6 +189,14 @@ class _AddItemScreenState extends State<AddItemScreen> {
         backgroundColor: navyBlue,
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
+        actions: [
+          if (widget.documentId == null)
+            IconButton(
+              icon: const Icon(Icons.camera_alt, color: Colors.white),
+              tooltip: "Scan Barcode / AI Vision",
+              onPressed: _scanAndAutoFill,
+            ),
+        ],
       ),
       body: Container(
         decoration: BoxDecoration(
@@ -160,6 +210,20 @@ class _AddItemScreenState extends State<AddItemScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (widget.documentId == null) ...[
+                  OutlinedButton.icon(
+                    onPressed: _scanAndAutoFill,
+                    icon: Icon(Icons.qr_code_scanner, color: navyBlue),
+                    label: Text("Auto-Fill with Barcode / AI Camera Scan", style: TextStyle(color: navyBlue, fontWeight: FontWeight.bold)),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      side: BorderSide(color: navyBlue),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+
                 const Text("Item Name", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                 const SizedBox(height: 8),
                 TextFormField(

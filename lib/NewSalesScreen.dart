@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:http/http.dart' as http;
 import 'Camera.dart';
+import 'add_items_screen.dart';
 
 class NewSalesScreen extends StatefulWidget {
   const NewSalesScreen({super.key});
@@ -88,6 +91,136 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
       }
       _calculateTotal();
     });
+  }
+
+  // --- FETCH PRODUCT FROM GLOBAL OPEN FOOD FACTS API ---
+  Future<Map<String, dynamic>?> _fetchProductFromGlobalAPI(String barcode) async {
+    try {
+      final url = Uri.parse('https://world.openfoodfacts.org/api/v0/product/$barcode.json');
+      final response = await http.get(url);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['status'] == 1 && data['product'] != null) {
+          final product = data['product'];
+          return {
+            'itemName': product['product_name'] ?? 'Unknown Product',
+            'category': 'Food Products & Staples',
+            'imageUrl': product['image_url'] ?? '',
+            'barcode': barcode,
+          };
+        }
+      }
+    } catch (e) {
+      debugPrint("Error connecting to Open Food Facts API: $e");
+    }
+    return null;
+  }
+
+  // --- SECURE MPIN VERIFICATION & NAVIGATE (WITH PRE-FILLED DATA) ---
+  Future<void> _verifyAndNavigateToAddItemWithData(Map<String, dynamic> initialData) async {
+    if (user == null) return;
+
+    try {
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('Users')
+          .doc(user!.uid)
+          .get();
+
+      if (!userDoc.exists) {
+        _showSnackBar("User profile record not found.", isError: true);
+        return;
+      }
+
+      final userData = userDoc.data() as Map<String, dynamic>?;
+      final String? storedMpin = userData?['mpin'];
+
+      if (storedMpin == null || storedMpin.isEmpty) {
+        _showSnackBar("Please set up your MPIN in Store Settings first.", isError: true);
+        return;
+      }
+
+      if (!mounted) return;
+
+      final TextEditingController mpinInputController = TextEditingController();
+      bool isVerified = false;
+
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          final bool isDark = Theme.of(context).brightness == Brightness.dark;
+          return AlertDialog(
+            backgroundColor: isDark ? const Color(0xFF242526) : Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text(
+              "Security MPIN Required",
+              style: TextStyle(color: isDark ? Colors.white : navyBlue, fontWeight: FontWeight.bold),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text("Enter your 4-digit MPIN to authorize adding this product:"),
+                const SizedBox(height: 15),
+                TextField(
+                  controller: mpinInputController,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  maxLength: 4,
+                  textAlign: TextAlign.center,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  style: TextStyle(fontSize: 24, letterSpacing: 10, color: isDark ? Colors.white : Colors.black),
+                  decoration: InputDecoration(
+                    counterText: "",
+                    filled: true,
+                    fillColor: isDark ? Colors.black26 : Colors.grey[200],
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: navyBlue,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () {
+                  if (mpinInputController.text == storedMpin) {
+                    isVerified = true;
+                    Navigator.pop(context);
+                  } else {
+                    _showSnackBar("Incorrect MPIN", isError: true);
+                  }
+                },
+                child: const Text("Verify", style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (isVerified && mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => AddItemScreen(
+              initialData: initialData,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      _showSnackBar("Error verifying MPIN: $e", isError: true);
+    }
+  }
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : navyBlue),
+    );
   }
 
   void _openMultiSelectSearchModal() async {
@@ -386,19 +519,29 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
   }
 
   void _openCameraScanner() async {
-    final scannedResult = await Navigator.push(
+    final scanResult = await Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => const CameraScreen()),
     );
 
-    if (scannedResult != null && scannedResult is String && mounted) {
+    if (scanResult != null && scanResult is String && mounted) {
       final firestore = FirebaseFirestore.instance;
       
+      // 1. Check local inventory by barcode
       var querySnapshot = await firestore
           .collection('Inventory')
           .where('userId', isEqualTo: user?.uid)
-          .where('barcode', isEqualTo: scannedResult)
+          .where('barcode', isEqualTo: scanResult)
           .get();
+
+      // If not found by barcode, check by item name (for AI Vision scan)
+      if (querySnapshot.docs.isEmpty) {
+        querySnapshot = await firestore
+            .collection('Inventory')
+            .where('userId', isEqualTo: user?.uid)
+            .where('itemName', isEqualTo: scanResult)
+            .get();
+      }
 
       if (querySnapshot.docs.isNotEmpty) {
         final doc = querySnapshot.docs.first;
@@ -419,10 +562,133 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Item not found for barcode: $scannedResult"), backgroundColor: Colors.redAccent),
-      );
+      // 2. Check if it's a numeric barcode -> Query Open Food Facts API
+      bool isNumericBarcode = RegExp(r'^\d+$').hasMatch(scanResult);
+      if (isNumericBarcode) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const Center(child: CircularProgressIndicator()),
+        );
+
+        final globalProduct = await _fetchProductFromGlobalAPI(scanResult);
+        if (!mounted) return;
+        Navigator.pop(context); // Dismiss loading spinner
+
+        if (globalProduct != null) {
+          _showFoundOnlineDialog(globalProduct);
+          return;
+        }
+      }
+
+      // 3. Not found locally or online:
+      if (isNumericBarcode) {
+        _promptForUnknownBarcodeName(scanResult);
+      } else {
+        // AI Vision detected an item name directly
+        _verifyAndNavigateToAddItemWithData({
+          'itemName': scanResult,
+          'barcode': '',
+        });
+      }
     }
+  }
+
+  // --- HELPER DIALOG: PRODUCT FOUND ONLINE ---
+  void _showFoundOnlineDialog(Map<String, dynamic> globalProduct) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final bool isDark = Theme.of(context).brightness == Brightness.dark;
+        return AlertDialog(
+          backgroundColor: isDark ? const Color(0xFF242526) : Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            "Product Found Online!",
+            style: TextStyle(color: isDark ? Colors.white : navyBlue, fontWeight: FontWeight.bold),
+          ),
+          content: Text("We found '${globalProduct['itemName']}' online. Would you like to add it to your inventory?"),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: navyBlue,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () {
+                Navigator.pop(context);
+                _verifyAndNavigateToAddItemWithData(globalProduct);
+              },
+              child: const Text("Add to Inventory", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // --- HELPER DIALOG: PROMPT NAME FOR UNKNOWN BARCODE ---
+  void _promptForUnknownBarcodeName(String scannedBarcode) {
+    final TextEditingController nameController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        final bool isDark = Theme.of(context).brightness == Brightness.dark;
+        return AlertDialog(
+          backgroundColor: isDark ? const Color(0xFF242526) : Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            "New Barcode Detected",
+            style: TextStyle(color: isDark ? Colors.white : navyBlue, fontWeight: FontWeight.bold),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text("Barcode: $scannedBarcode", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+              const SizedBox(height: 12),
+              const Text("Enter the name for this item:"),
+              const SizedBox(height: 8),
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: "e.g., Safeguard Soap 135g",
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: navyBlue,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () {
+                String enteredName = nameController.text.trim();
+                Navigator.pop(context);
+
+                // Pass BOTH barcode and typed name to AddItemScreen
+                _verifyAndNavigateToAddItemWithData({
+                  'barcode': scannedBarcode,
+                  'itemName': enteredName.isNotEmpty ? enteredName : 'New Item',
+                });
+              },
+              child: const Text("Continue", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _showReceiptOverview() {
