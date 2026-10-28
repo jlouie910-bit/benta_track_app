@@ -22,6 +22,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
 
   bool _isLoading = false;
   String? _storedMpin;
+  String _initialStoreName = "";
 
   bool _obscurePassword = true;
 
@@ -36,18 +37,27 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
 
   void _loadUserData() async {
     _emailController.text = user?.email ?? "";
+    if (user == null) return;
+
     try {
-      // FIXED: Changed collection to lowercase 'users' to match Store Settings
       DocumentSnapshot userDoc = await FirebaseFirestore.instance
           .collection('users')
-          .doc(user?.uid)
+          .doc(user!.uid)
           .get();
 
+      if (!userDoc.exists) {
+        userDoc = await FirebaseFirestore.instance
+            .collection('Users')
+            .doc(user!.uid)
+            .get();
+      }
+
       if (userDoc.exists && mounted) {
+        final data = userDoc.data() as Map<String, dynamic>?;
         setState(() {
-          _storeNameController.text = userDoc.data().toString().contains('storeName') ? userDoc['storeName'] ?? "" : "";
-          Map<String, dynamic>? data = userDoc.data() as Map<String, dynamic>?;
-          _storedMpin = data?['mpin'];
+          _initialStoreName = data?['storeName'] ?? data?['store_name'] ?? "";
+          _storeNameController.text = _initialStoreName;
+          _storedMpin = data?['mpin'] ?? data?['pin'] ?? data?['securityMpin'];
         });
       }
     } catch (e) {
@@ -61,10 +71,30 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     );
   }
 
-  // --- 1. MPIN VERIFICATION FIRST ---
   Future<bool> _verifyMpin() async {
-    if (_storedMpin == null) {
-      _showSnackBar("Please setup an MPIN in Store Settings first.", isError: true);
+    try {
+      DocumentSnapshot freshDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user!.uid)
+          .get();
+      
+      if (!freshDoc.exists) {
+        freshDoc = await FirebaseFirestore.instance
+            .collection('Users')
+            .doc(user!.uid)
+            .get();
+      }
+
+      if (freshDoc.exists) {
+        final data = freshDoc.data() as Map<String, dynamic>?;
+        _storedMpin = data?['mpin'] ?? data?['pin'] ?? data?['securityMpin'];
+      }
+    } catch (e) {
+      debugPrint("Error refreshing MPIN: $e");
+    }
+
+    if (_storedMpin == null || _storedMpin!.isEmpty) {
+      _showSnackBar("MPIN not found in database. Please set up your MPIN in Store Settings first.", isError: true);
       return false;
     }
 
@@ -79,12 +109,12 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
         return AlertDialog(
           backgroundColor: isDark ? const Color(0xFF242526) : Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text("Confirm Password Change",
+          title: Text("Security MPIN Required",
               style: TextStyle(color: isDark ? Colors.white : navyBlue, fontWeight: FontWeight.bold)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text("Enter your 4-digit MPIN to confirm you want to change your password:"),
+              const Text("Enter your 4-digit MPIN to authorize your password change:"),
               const SizedBox(height: 15),
               TextField(
                 controller: mpinInputController,
@@ -92,6 +122,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                 keyboardType: TextInputType.number,
                 maxLength: 4,
                 textAlign: TextAlign.center,
+                autofocus: true,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 style: TextStyle(fontSize: 24, letterSpacing: 10, color: isDark ? Colors.white : Colors.black),
                 decoration: InputDecoration(
@@ -108,14 +139,14 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: navyBlue, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
               onPressed: () {
-                if (mpinInputController.text == _storedMpin) {
+                if (mpinInputController.text.trim() == _storedMpin!.trim()) {
                   isVerified = true;
                   Navigator.pop(context);
                 } else {
                   _showSnackBar("Incorrect MPIN", isError: true);
                 }
               },
-              child: const Text("Confirm MPIN", style: TextStyle(color: Colors.white)),
+              child: const Text("Verify", style: TextStyle(color: Colors.white)),
             ),
           ],
         );
@@ -124,7 +155,6 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     return isVerified;
   }
 
-  // --- 2. CURRENT PASSWORD PROMPT SECOND ---
   Future<String?> _showPasswordPrompt() async {
     String? password;
     return showDialog<String>(
@@ -138,10 +168,11 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text("Enter your CURRENT account password to finalize the change."),
+              const Text("Enter your CURRENT account password to finalize the password change."),
               const SizedBox(height: 15),
               TextField(
                 obscureText: true,
+                autofocus: true,
                 decoration: const InputDecoration(
                   labelText: "Current Password",
                   border: OutlineInputBorder(),
@@ -167,18 +198,23 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     bool isChangingPassword = _passwordController.text.isNotEmpty;
+    bool isChangingStoreName = _storeNameController.text.trim() != _initialStoreName.trim();
 
+    if (!isChangingPassword && !isChangingStoreName) {
+      _showSnackBar("No changes detected.");
+      return;
+    }
+
+    // Only require MPIN verification if changing the password
     if (isChangingPassword) {
+      bool mpinVerified = await _verifyMpin();
+      if (!mpinVerified) return;
+
       if (_passwordController.text != _confirmPasswordController.text) {
         _showSnackBar("New passwords do not match!", isError: true);
         return;
       }
 
-      // Step A: Prompt MPIN first to confirm password change intent
-      bool mpinVerified = await _verifyMpin();
-      if (!mpinVerified) return;
-
-      // Step B: Prompt current password for Firebase re-authentication
       String? currentPassword = await _showPasswordPrompt();
       if (currentPassword == null || currentPassword.isEmpty) {
         return;
@@ -207,10 +243,13 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     }
 
     try {
-      // Update Store Name in Firestore using lowercase 'users'
       await FirebaseFirestore.instance.collection('users').doc(user?.uid).set({
         'storeName': _storeNameController.text.trim(),
       }, SetOptions(merge: true));
+
+      setState(() {
+        _initialStoreName = _storeNameController.text.trim();
+      });
 
       if (mounted) {
         _showSnackBar("Profile updated successfully.");

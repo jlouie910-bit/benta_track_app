@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -7,7 +8,7 @@ import 'Navigation.dart';
 import 'sign_up.dart';
 import 'forgot_password.dart';
 import 'terms_conditions.dart';
-import 'WelcomeSetupScreen.dart'; // Make sure this matches your welcome setup screen filename
+import 'WelcomeSetupScreen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -57,12 +58,14 @@ class _LoginScreenState extends State<LoginScreen> {
       return;
     }
 
+    FocusScope.of(context).unfocus();
     setState(() => _isLoading = true);
 
     try {
       final userCredential = await _authService.login(email, password);
 
       if (userCredential != null && userCredential.user != null && mounted) {
+        TextInput.finishAutofillContext();
         await _checkSetupAndNavigate(userCredential.user!.uid);
       } else if (mounted) {
         _showErrorSnackBar("Invalid email or password.");
@@ -86,7 +89,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // Google Sign-In Handler
   Future<void> _handleGoogleSignIn() async {
     if (!_hasAcceptedTerms) {
       _showErrorSnackBar("Please accept the Terms and Conditions to continue.");
@@ -99,7 +101,6 @@ class _LoginScreenState extends State<LoginScreen> {
       if (userCredential != null && userCredential.user != null && mounted) {
         await _checkSetupAndNavigate(userCredential.user!.uid);
       } else if (mounted) {
-        // User cancelled or error occurred
         setState(() => _isLoading = false);
       }
     } catch (e) {
@@ -110,30 +111,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // Facebook Sign-In Handler
-  Future<void> _handleFacebookSignIn() async {
-    if (!_hasAcceptedTerms) {
-      _showErrorSnackBar("Please accept the Terms and Conditions to continue.");
-      return;
-    }
-
-    setState(() => _isLoading = true);
-    try {
-      final userCredential = await _authService.signInWithFacebook();
-      if (userCredential != null && userCredential.user != null && mounted) {
-        await _checkSetupAndNavigate(userCredential.user!.uid);
-      } else if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        _showErrorSnackBar("Facebook Sign-In failed: $e");
-      }
-    }
-  }
-
-  // Checks if user completed setup in Firestore 'Users' collection and routes accordingly
   Future<void> _checkSetupAndNavigate(String uid) async {
     try {
       final userDoc = await FirebaseFirestore.instance.collection('Users').doc(uid).get();
@@ -225,21 +202,29 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 40),
 
-                    _buildInputField(
-                      "Email",
-                      Icons.email_outlined,
-                      "Enter your email",
-                      _phoneController,
-                      false,
-                      keyboardType: TextInputType.emailAddress,
-                    ),
-                    const SizedBox(height: 20),
-                    _buildInputField(
-                      "Password",
-                      Icons.lock_outline,
-                      "Enter your password",
-                      _passwordController,
-                      true,
+                    AutofillGroup(
+                      child: Column(
+                        children: [
+                          _buildInputField(
+                            "Email",
+                            Icons.email_outlined,
+                            "Enter your email",
+                            _phoneController,
+                            false,
+                            keyboardType: TextInputType.emailAddress,
+                            autofillHints: const [AutofillHints.email, AutofillHints.username],
+                          ),
+                          const SizedBox(height: 20),
+                          _buildInputField(
+                            "Password",
+                            Icons.lock_outline,
+                            "Enter your password",
+                            _passwordController,
+                            true,
+                            autofillHints: const [AutofillHints.password],
+                          ),
+                        ],
+                      ),
                     ),
 
                     Align(
@@ -284,6 +269,7 @@ class _LoginScreenState extends State<LoginScreen> {
     TextEditingController controller,
     bool isPassword, {
     TextInputType keyboardType = TextInputType.text,
+    Iterable<String>? autofillHints,
   }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -294,6 +280,7 @@ class _LoginScreenState extends State<LoginScreen> {
           controller: controller,
           obscureText: isPassword ? _obscurePassword : false,
           keyboardType: keyboardType,
+          autofillHints: autofillHints,
           style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
             prefixIcon: Icon(icon, color: mintGreen, size: 20),
@@ -403,11 +390,8 @@ class _LoginScreenState extends State<LoginScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Connected Google Sign-In Button
+            // Only Google Sign-In button remains
             _socialIconButton(const FaIcon(FontAwesomeIcons.google, color: Colors.white, size: 22), _handleGoogleSignIn),
-            const SizedBox(width: 20),
-            // Connected Facebook Sign-In Button
-            _socialIconButton(const FaIcon(FontAwesomeIcons.facebook, color: Color(0xFF1877F2), size: 22), _handleFacebookSignIn),
           ],
         ),
       ],
@@ -420,7 +404,7 @@ class _LoginScreenState extends State<LoginScreen> {
       borderRadius: BorderRadius.circular(15),
       child: Container(
         height: 55,
-        width: 80,
+        width: 140, // Expanded width since it's now solo
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.05),
           borderRadius: BorderRadius.circular(15),

@@ -237,7 +237,9 @@ class _ListahanScreenState extends State<ListahanScreen> {
 
                     double totalBenta = (data['totalAmount'] ?? 0.0).toDouble();
                     DateTime dt = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
-                    String dateStr = "${dt.month}/${dt.day}/${dt.year} | ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
+                    
+                    // --- CONVERTED TO 12-HOUR FORMAT WITH AM/PM ---
+                    String dateStr = DateFormat('M/d/yyyy | h:mm a').format(dt);
 
                     double transactionProfit = 0;
                     List items = data['items'] ?? [];

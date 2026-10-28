@@ -30,6 +30,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   final Color navyBlue = const Color(0xFF1E3A5F);
 
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
+
+  bool _isPasswordStrong(String password) {
+    // Minimum 8 characters, at least 1 uppercase letter, at least 1 number
+    final hasMinLength = password.length >= 8;
+    final hasUppercase = password.contains(RegExp(r'[A-Z]'));
+    final hasDigit = password.contains(RegExp(r'[0-9]'));
+
+    return hasMinLength && hasUppercase && hasDigit;
+  }
+
   void _showOtpPopup({required String email, required String password}) {
     final TextEditingController otpController = TextEditingController();
     _otpErrorMessage = null;
@@ -153,12 +170,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
                               .doc(user.uid)
                               .set({
                             'email': email,
-                            'setupComplete': false, // Triggers WelcomeSetupScreen in main.dart
+                            'setupComplete': false, // Triggers WelcomeSetupScreen
                             'createdAt': FieldValue.serverTimestamp(),
                           }, SetOptions(merge: true));
                         }
 
                         if (mounted) {
+                          // Unfocus and trigger password manager save prompt
+                          FocusScope.of(context).unfocus();
+                          TextInput.finishAutofillContext();
+
                           Navigator.of(context).pop(); // Close bottom sheet
                           Navigator.of(context).pop(); // Exit SignUpScreen
                           _showSnackBar("Verified and Registered Successfully!", Colors.green);
@@ -194,6 +215,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       _showSnackBar("Please fill in all fields.", Colors.redAccent);
+      return;
+    }
+
+    // Secure password validation check
+    if (!_isPasswordStrong(_passwordController.text)) {
+      _showSnackBar(
+        "Password must be at least 8 characters long.",
+        Colors.redAccent,
+      );
       return;
     }
 
@@ -240,135 +270,180 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0D1B2A),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0D1B2A),
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: () => Navigator.pop(context),
+          ),
         ),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 30),
-        child: Column(
-          children: [
-            const SizedBox(height: 40),
-            const Text("Create Account",
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold)),
-            const SizedBox(height: 50),
-            _buildField(_emailController, "Email", Icons.email, false),
-            const SizedBox(height: 20),
-            _buildField(
-              _passwordController,
-              "Password",
-              Icons.lock,
-              true,
-              isObscured: _obscurePassword,
-              onToggle: () =>
-                  setState(() => _obscurePassword = !_obscurePassword),
-            ),
-            const SizedBox(height: 20),
-            _buildField(
-              _confirmPasswordController,
-              "Confirm Password",
-              Icons.lock_outline,
-              true,
-              isObscured: _obscureConfirmPassword,
-              onToggle: () => setState(
-                  () => _obscureConfirmPassword = !_obscureConfirmPassword),
-            ),
-            const SizedBox(height: 20),
-            Theme(
-              data: ThemeData(unselectedWidgetColor: Colors.white70),
-              child: CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                value: _hasAcceptedTerms,
-                activeColor: Colors.cyanAccent,
-                checkColor: navyBlue,
-                onChanged: (value) =>
-                    setState(() => _hasAcceptedTerms = value ?? false),
-                controlAffinity: ListTileControlAffinity.leading,
-                title: GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => const TermsConditionsScreen()),
-                    );
-                  },
-                  child: RichText(
-                    text: const TextSpan(
-                      text: "I accept the ",
-                      style: TextStyle(color: Colors.white70, fontSize: 13),
-                      children: [
-                        TextSpan(
-                          text: "Terms and Conditions",
-                          style: TextStyle(
-                            color: Colors.cyanAccent,
-                            fontWeight: FontWeight.bold,
-                            decoration: TextDecoration.underline,
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 30),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 20),
+              const Center(
+                child: Text("Create Account",
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(height: 35),
+
+              // AUTOFILL GROUP FOR REGISTRATION CREDENTIALS
+              AutofillGroup(
+                child: Column(
+                  children: [
+                    _buildField(
+                      _emailController,
+                      "Email",
+                      Icons.email,
+                      false,
+                      autofillHints: const [AutofillHints.email, AutofillHints.newUsername],
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                    const SizedBox(height: 20),
+                    _buildField(
+                      _passwordController,
+                      "Password",
+                      Icons.lock,
+                      true,
+                      isObscured: _obscurePassword,
+                      autofillHints: const [AutofillHints.newPassword],
+                      onToggle: () =>
+                          setState(() => _obscurePassword = !_obscurePassword),
+                    ),
+                    const SizedBox(height: 8),
+                    // Helpful indicator text for password requirements
+                    const Text(
+                      "Must be 8+ chars with at least 1 uppercase letter and 1 number.",
+                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
+                    const SizedBox(height: 15),
+                    _buildField(
+                      _confirmPasswordController,
+                      "Confirm Password",
+                      Icons.lock_outline,
+                      true,
+                      isObscured: _obscureConfirmPassword,
+                      autofillHints: const [AutofillHints.newPassword],
+                      onToggle: () => setState(
+                          () => _obscureConfirmPassword = !_obscureConfirmPassword),
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+              Theme(
+                data: ThemeData(unselectedWidgetColor: Colors.white70),
+                child: CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _hasAcceptedTerms,
+                  activeColor: Colors.cyanAccent,
+                  checkColor: navyBlue,
+                  onChanged: (value) =>
+                      setState(() => _hasAcceptedTerms = value ?? false),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: GestureDetector(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => const TermsConditionsScreen()),
+                      );
+                    },
+                    child: RichText(
+                      text: const TextSpan(
+                        text: "I accept the ",
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                        children: [
+                          TextSpan(
+                            text: "Terms and Conditions",
+                            style: TextStyle(
+                              color: Colors.cyanAccent,
+                              fontWeight: FontWeight.bold,
+                              decoration: TextDecoration.underline,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              height: 55,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      _hasAcceptedTerms ? Colors.white : Colors.white24,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30)),
-                ),
-                onPressed: _isLoading ? null : _handleSignUp,
-                child: _isLoading
-                    ? CircularProgressIndicator(color: navyBlue)
-                    : Text("SIGN UP",
-                        style: TextStyle(
-                            color: navyBlue, fontWeight: FontWeight.bold)),
-              ),
-            ),
-            const SizedBox(height: 25),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text("Already have an account? ",
-                    style: TextStyle(color: Colors.white70)),
-                GestureDetector(
-                  onTap: () => Navigator.pop(context),
-                  child: const Text(
-                    "Login",
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        decoration: TextDecoration.underline),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 55,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor:
+                        _hasAcceptedTerms ? Colors.white : Colors.white24,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30)),
                   ),
+                  onPressed: _isLoading ? null : _handleSignUp,
+                  child: _isLoading
+                      ? SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                              color: navyBlue, strokeWidth: 2),
+                        )
+                      : Text("SIGN UP",
+                          style: TextStyle(
+                              color: navyBlue, fontWeight: FontWeight.bold)),
                 ),
-              ],
-            ),
-          ],
+              ),
+              const SizedBox(height: 25),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text("Already have an account? ",
+                      style: TextStyle(color: Colors.white70)),
+                  GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: const Text(
+                      "Login",
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          decoration: TextDecoration.underline),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 30),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildField(
-      TextEditingController controller, String hint, IconData icon, bool isPass,
-      {bool isObscured = false, VoidCallback? onToggle}) {
+    TextEditingController controller,
+    String hint,
+    IconData icon,
+    bool isPass, {
+    bool isObscured = false,
+    VoidCallback? onToggle,
+    Iterable<String>? autofillHints,
+    TextInputType keyboardType = TextInputType.text,
+  }) {
     return TextField(
       controller: controller,
       obscureText: isPass ? isObscured : false,
+      keyboardType: keyboardType,
+      autofillHints: autofillHints,
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         prefixIcon: Icon(icon, color: Colors.white70),
@@ -376,6 +451,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
         hintStyle: const TextStyle(color: Colors.white54),
         enabledBorder: const UnderlineInputBorder(
             borderSide: BorderSide(color: Colors.white24)),
+        focusedBorder: const UnderlineInputBorder(
+            borderSide: BorderSide(color: Colors.cyanAccent, width: 2)),
         suffixIcon: isPass
             ? IconButton(
                 icon: Icon(

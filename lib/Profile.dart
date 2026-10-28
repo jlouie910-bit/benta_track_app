@@ -113,7 +113,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       children: [
                         Text("Basic Plan (Free)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                         SizedBox(height: 4),
-                        Text("• AI Chats: 10/day limit\n• Analytics: Unlimited use\n• Barcode/AI Scanner: 10 uses/day\n• Counter Checkout: 10 transactions/day",
+                        Text(
+                          "• AI Chats: 10/day limit\n• Analytics: Unlimited use\n• Barcode/AI Scanner: 10 uses/day\n• Counter Checkout: 10 transactions/day",
                           style: TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                       ],
@@ -143,7 +144,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       children: [
                         Text("Premium Plan (Pro)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                         SizedBox(height: 4),
-                        Text("• AI Chats: Unlimited 🚀\n• Analytics: Unlimited use\n• Barcode/AI Scanner: Unlimited use\n• Counter Checkout: Unlimited use",
+                        Text(
+                          "• AI Chats: Unlimited 🚀\n• Analytics: Unlimited use\n• Barcode/AI Scanner: Unlimited use\n• Counter Checkout: Unlimited use",
                           style: TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                       ],
@@ -239,7 +241,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(height: 85),
 
             StreamBuilder<DocumentSnapshot>(
-              stream: FirebaseFirestore.instance.collection('Users').doc(user?.uid).snapshots(),
+              stream: FirebaseFirestore.instance.collection('users').doc(user?.uid).snapshots(),
               builder: (context, snapshot) {
                 String displayName = user?.email ?? "Store Owner";
                 if (snapshot.hasData && snapshot.data!.exists) {
@@ -325,7 +327,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                   const SizedBox(height: 10),
 
-                  // --- NEW SUBSCRIPTION SECTION ---
+                  // --- SUBSCRIPTION SECTION ---
                   _buildSectionHeader("Subscription", isDark),
                   _buildProfileOption(
                     isDark: isDark,

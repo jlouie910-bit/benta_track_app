@@ -127,7 +127,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
-                            color: isFastMover ? Colors.green.withOpacity(0.15) : Colors.orange.withOpacity(0.15),
+                            color: isFastMover ? Colors.green.withValues(alpha: 0.15) : Colors.orange.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
@@ -245,9 +245,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       const SizedBox(height: 24),
                       _buildItemVelocitySection(isDark),
                       const SizedBox(height: 24),
-                      _buildTopItemsLeaderboard(isDark), // SUGGESTION #3: Top 5 Leaderboard
+                      _buildTopItemsLeaderboard(isDark),
                       const SizedBox(height: 24),
-                      _buildInventoryValuationCard(isDark), // SUGGESTION #5: Inventory Valuation Overview
+                      _buildInventoryValuationCard(isDark),
                       const SizedBox(height: 24),
                       _buildHeader("Revenue Trend (Benta)", isDark),
                       _buildBarChart(bentaData, isDark),
@@ -308,7 +308,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       decoration: BoxDecoration(
                         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.green.withOpacity(0.3)),
+                        border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -347,7 +347,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       decoration: BoxDecoration(
                         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
                         borderRadius: BorderRadius.circular(15),
-                        border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                        border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -384,7 +384,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  // SUGGESTION #3 IMPLEMENTATION: Top 5 Best-Selling Leaderboard
   Widget _buildTopItemsLeaderboard(bool isDark) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -433,7 +432,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                           children: [
                             CircleAvatar(
                               radius: 14,
-                              backgroundColor: navyBlue.withOpacity(0.15),
+                              backgroundColor: navyBlue.withValues(alpha: 0.15),
                               child: Text("${index + 1}", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: navyBlue)),
                             ),
                             const SizedBox(width: 12),
@@ -459,7 +458,6 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  // SUGGESTION #5 IMPLEMENTATION: Inventory Valuation Overview
   Widget _buildInventoryValuationCard(bool isDark) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -476,12 +474,24 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
         for (var doc in snapshot.data!.docs) {
           var data = doc.data() as Map<String, dynamic>;
-          double cost = (data['cost'] ?? 0.0).toDouble();
-          double price = (data['price'] ?? 0.0).toDouble();
           int stock = (data['stock'] ?? 0).toInt();
+          double pricePerPiece = (data['price'] ?? 0.0).toDouble();
 
-          totalCapital += cost * stock;
-          potentialRevenue += price * stock;
+          double costPerPiece = 0.0;
+          int piecesPerPack = (data['piecesPerPack'] ?? 1).toInt();
+          double totalPackCost = (data['totalPackCost'] ?? 0.0).toDouble();
+          double storedCost = (data['cost'] ?? 0.0).toDouble();
+
+          if (piecesPerPack > 1 && totalPackCost > 0) {
+            costPerPiece = totalPackCost / piecesPerPack;
+          } else if (totalPackCost > 0 && stock > 0 && storedCost > (pricePerPiece * 2)) {
+            costPerPiece = totalPackCost / (piecesPerPack > 0 ? piecesPerPack : 1);
+          } else {
+            costPerPiece = storedCost;
+          }
+
+          totalCapital += costPerPiece * stock;
+          potentialRevenue += pricePerPiece * stock;
         }
 
         double potentialProfit = potentialRevenue - totalCapital;
@@ -538,7 +548,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: mintGreen.withOpacity(0.5), width: 1.5),
+        border: Border.all(color: mintGreen.withValues(alpha: 0.5), width: 1.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -605,15 +615,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
+  // OPTIMIZED BAR CHART FOR A PROFESSIONAL LOOK
   Widget _buildBarChart(Map<String, double> data, bool isDark) {
     List<String> days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     return Container(
-      height: 220,
-      padding: const EdgeInsets.fromLTRB(10, 20, 15, 10),
+      height: 240,
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: isDark ? Colors.white10 : Colors.grey[100]!),
+        border: Border.all(color: isDark ? Colors.white10 : Colors.grey[200]!),
       ),
       child: BarChart(
         BarChartData(
@@ -625,38 +636,88 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 showTitles: true,
                 getTitlesWidget: (value, meta) => Padding(
                   padding: const EdgeInsets.only(top: 8.0),
-                  child: Text(days[value.toInt() % 7], style: const TextStyle(color: Colors.grey, fontSize: 10)),
+                  child: Text(days[value.toInt() % 7], style: const TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.w600)),
                 ),
               ),
             ),
-            leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 30, getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: const TextStyle(color: Colors.grey, fontSize: 10)))),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 36,
+                getTitlesWidget: (value, meta) => Text(
+                  value >= 1000 ? '${(value / 1000).toStringAsFixed(1)}k' : value.toInt().toString(),
+                  style: const TextStyle(color: Colors.grey, fontSize: 10),
+                ),
+              ),
+            ),
             topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           ),
-          gridData: FlGridData(show: true, drawVerticalLine: false, getDrawingHorizontalLine: (value) => FlLine(color: isDark ? Colors.white10 : Colors.black12, strokeWidth: 1)),
+          gridData: FlGridData(
+            show: true,
+            drawVerticalLine: false,
+            getDrawingHorizontalLine: (value) => FlLine(color: isDark ? Colors.white10 : Colors.grey.shade200, strokeWidth: 1),
+          ),
           borderData: FlBorderData(show: false),
-          barGroups: List.generate(7, (i) => BarChartGroupData(x: i, barRods: [BarChartRodData(toY: data[days[i]]!, color: navyBlue, width: 16, borderRadius: BorderRadius.circular(4))])),
+          barGroups: List.generate(7, (i) => BarChartGroupData(
+            x: i, 
+            barRods: [
+              BarChartRodData(
+                toY: data[days[i]]!, 
+                color: navyBlue, 
+                width: 14, 
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+                backDrawRodData: BackgroundBarChartRodData(
+                  show: true,
+                  toY: (data.values.isEmpty ? 100 : (data.values.reduce((a, b) => a > b ? a : b) * 1.2)),
+                  color: isDark ? Colors.white.withValues(alpha: 0.02) : Colors.grey.withValues(alpha: 0.05),
+                ),
+              )
+            ],
+          )),
         ),
       ),
     );
   }
 
+  // OPTIMIZED LINE CHART FOR A PROFESSIONAL LOOK
   Widget _buildProfitLineChart(Map<String, double> data, bool isDark) {
     List<String> days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     return Container(
-      height: 220,
-      padding: const EdgeInsets.fromLTRB(10, 20, 20, 10),
+      height: 240,
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: isDark ? Colors.white10 : Colors.grey[100]!),
+        border: Border.all(color: isDark ? Colors.white10 : Colors.grey[200]!),
       ),
       child: LineChart(
         LineChartData(
-          gridData: FlGridData(show: true, drawVerticalLine: false),
+          gridData: FlGridData(
+            show: true, 
+            drawVerticalLine: false,
+            getDrawingHorizontalLine: (value) => FlLine(color: isDark ? Colors.white10 : Colors.grey.shade200, strokeWidth: 1),
+          ),
           titlesData: FlTitlesData(
-            bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, getTitlesWidget: (value, meta) => Text(days[value.toInt() % 7], style: const TextStyle(color: Colors.grey, fontSize: 10)))),
-            leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 30, getTitlesWidget: (value, meta) => Text(value.toInt().toString(), style: const TextStyle(color: Colors.grey, fontSize: 10)))),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true, 
+                getTitlesWidget: (value, meta) => Padding(
+                  padding: const EdgeInsets.only(top: 8.0),
+                  child: Text(days[value.toInt() % 7], style: const TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true, 
+                reservedSize: 36, 
+                getTitlesWidget: (value, meta) => Text(
+                  value >= 1000 ? '${(value / 1000).toStringAsFixed(1)}k' : value.toInt().toString(),
+                  style: const TextStyle(color: Colors.grey, fontSize: 10),
+                ),
+              ),
+            ),
             topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           ),
@@ -666,8 +727,21 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               spots: List.generate(7, (i) => FlSpot(i.toDouble(), data[days[i]]!)),
               color: mintGreen,
               isCurved: true,
-              barWidth: 3,
-              belowBarData: BarAreaData(show: true, gradient: LinearGradient(colors: [mintGreen.withOpacity(0.3), mintGreen.withOpacity(0.0)], begin: Alignment.topCenter, end: Alignment.bottomCenter)),
+              curveSmoothness: 0.35,
+              barWidth: 3.5,
+              isStrokeCapRound: true,
+              dotData: const FlDotData(show: true),
+              belowBarData: BarAreaData(
+                show: true, 
+                gradient: LinearGradient(
+                  colors: [
+                    mintGreen.withValues(alpha: 0.3), 
+                    mintGreen.withValues(alpha: 0.0),
+                  ], 
+                  begin: Alignment.topCenter, 
+                  end: Alignment.bottomCenter,
+                ),
+              ),
             )
           ],
         ),

@@ -93,7 +93,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     });
   }
 
-  // --- FETCH PRODUCT FROM GLOBAL OPEN FOOD FACTS API ---
   Future<Map<String, dynamic>?> _fetchProductFromGlobalAPI(String barcode) async {
     try {
       final url = Uri.parse('https://world.openfoodfacts.org/api/v0/product/$barcode.json');
@@ -117,7 +116,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     return null;
   }
 
-  // --- SECURE MPIN VERIFICATION & NAVIGATE (WITH PRE-FILLED DATA) ---
   Future<void> _verifyAndNavigateToAddItemWithData(Map<String, dynamic> initialData) async {
     if (user == null) return;
 
@@ -330,29 +328,36 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                                 Row(
                                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                   children: [
-                                    if (hasPackOption)
-                                      ChoiceChip(
-                                        label: Text(isPackMode ? "Selling: Pack ($piecesPerPack pcs)" : "Selling: Piece"),
-                                        selected: isPackMode,
-                                        selectedColor: Colors.teal.shade100,
-                                        onSelected: (val) {
-                                          setModalState(() {
-                                            if (isSelected) {
-                                              tempSelections[docId]!['isPack'] = val;
-                                            } else {
-                                              tempSelections[docId] = {'qty': 1, 'isPack': val};
-                                            }
-                                          });
-                                        },
-                                      )
-                                    else
-                                      const Text("Sold by Piece only", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                    // FIXED: Wrapped in Flexible to prevent overflow
+                                    Flexible(
+                                      child: hasPackOption
+                                          ? ChoiceChip(
+                                              label: Text(
+                                                isPackMode ? "Pack ($piecesPerPack pcs)" : "Piece",
+                                                style: const TextStyle(fontSize: 11),
+                                              ),
+                                              selected: isPackMode,
+                                              selectedColor: Colors.teal.shade100,
+                                              onSelected: (val) {
+                                                setModalState(() {
+                                                  if (isSelected) {
+                                                    tempSelections[docId]!['isPack'] = val;
+                                                  } else {
+                                                    tempSelections[docId] = {'qty': 1, 'isPack': val};
+                                                  }
+                                                });
+                                              },
+                                            )
+                                          : const Text("Piece only", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                                    ),
                                     
                                     Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         if (isSelected) ...[
                                           IconButton(
+                                            constraints: const BoxConstraints(),
+                                            padding: const EdgeInsets.symmetric(horizontal: 4),
                                             icon: const Icon(Icons.remove, size: 18),
                                             onPressed: () {
                                               setModalState(() {
@@ -419,6 +424,8 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                                             ),
                                           ),
                                           IconButton(
+                                            constraints: const BoxConstraints(),
+                                            padding: const EdgeInsets.symmetric(horizontal: 4),
                                             icon: const Icon(Icons.add, size: 18),
                                             onPressed: () {
                                               setModalState(() {
@@ -430,6 +437,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                                           ),
                                         ],
                                         Checkbox(
+                                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                           activeColor: navyBlue,
                                           value: isSelected,
                                           onChanged: (bool? value) {
@@ -527,14 +535,12 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     if (scanResult != null && scanResult is String && mounted) {
       final firestore = FirebaseFirestore.instance;
       
-      // 1. Check local inventory by barcode
       var querySnapshot = await firestore
           .collection('Inventory')
           .where('userId', isEqualTo: user?.uid)
           .where('barcode', isEqualTo: scanResult)
           .get();
 
-      // If not found by barcode, check by item name (for AI Vision scan)
       if (querySnapshot.docs.isEmpty) {
         querySnapshot = await firestore
             .collection('Inventory')
@@ -562,7 +568,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         return;
       }
 
-      // 2. Check if it's a numeric barcode -> Query Open Food Facts API
       bool isNumericBarcode = RegExp(r'^\d+$').hasMatch(scanResult);
       if (isNumericBarcode) {
         showDialog(
@@ -573,7 +578,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
 
         final globalProduct = await _fetchProductFromGlobalAPI(scanResult);
         if (!mounted) return;
-        Navigator.pop(context); // Dismiss loading spinner
+        Navigator.pop(context);
 
         if (globalProduct != null) {
           _showFoundOnlineDialog(globalProduct);
@@ -581,11 +586,9 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         }
       }
 
-      // 3. Not found locally or online:
       if (isNumericBarcode) {
         _promptForUnknownBarcodeName(scanResult);
       } else {
-        // AI Vision detected an item name directly
         _verifyAndNavigateToAddItemWithData({
           'itemName': scanResult,
           'barcode': '',
@@ -594,7 +597,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     }
   }
 
-  // --- HELPER DIALOG: PRODUCT FOUND ONLINE ---
   void _showFoundOnlineDialog(Map<String, dynamic> globalProduct) {
     showDialog(
       context: context,
@@ -630,7 +632,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     );
   }
 
-  // --- HELPER DIALOG: PROMPT NAME FOR UNKNOWN BARCODE ---
   void _promptForUnknownBarcodeName(String scannedBarcode) {
     final TextEditingController nameController = TextEditingController();
 
@@ -677,7 +678,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                 String enteredName = nameController.text.trim();
                 Navigator.pop(context);
 
-                // Pass BOTH barcode and typed name to AddItemScreen
                 _verifyAndNavigateToAddItemWithData({
                   'barcode': scannedBarcode,
                   'itemName': enteredName.isNotEmpty ? enteredName : 'New Item',
@@ -855,7 +855,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         _totalAmount = 0.0;
       });
 
-      messenger.showSnackBar(const SnackBar(content: Text("Checkout Successful! Stock & Profit Calculated Correctly."), backgroundColor: Colors.green));
+      messenger.showSnackBar(const SnackBar(content: Text("Checkout Successful!."), backgroundColor: Colors.green));
     } catch (e) {
       if (navigator.canPop()) navigator.pop();
       messenger.showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));

@@ -2,7 +2,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:flutter_facebook_auth/flutter_facebook_auth.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:math';
@@ -103,7 +102,6 @@ class AuthService {
 
   Future<UserCredential?> signInWithGoogle() async {
     try {
-      // Force account selection prompt
       await _googleSignIn.signOut();
       
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
@@ -142,45 +140,10 @@ class AuthService {
     }
   }
 
-  Future<UserCredential?> signInWithFacebook() async {
-    try {
-      final LoginResult result = await FacebookAuth.instance.login();
-      if (result.status == LoginStatus.success) {
-        final OAuthCredential credential = FacebookAuthProvider.credential(
-            result.accessToken!.tokenString);
-
-        UserCredential userCredential =
-            await _auth.signInWithCredential(credential);
-
-        if (userCredential.user != null) {
-          final docRef =
-              _firestore.collection('Users').doc(userCredential.user!.uid);
-          final doc = await docRef.get();
-
-          if (!doc.exists) {
-            await docRef.set({
-              'email': userCredential.user!.email ?? '',
-              'ownerName': userCredential.user!.displayName ?? '',
-              'setupComplete': false,
-              'createdAt': FieldValue.serverTimestamp(),
-            }, SetOptions(merge: true));
-          }
-        }
-
-        return userCredential;
-      }
-      return null;
-    } catch (e) {
-      debugPrint("Facebook Error: $e");
-      return null;
-    }
-  }
-
   Future<void> signOut() async {
     await _auth.signOut();
     try {
       await _googleSignIn.signOut();
-      await FacebookAuth.instance.logOut();
     } catch (_) {}
   }
 }

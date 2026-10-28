@@ -21,6 +21,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
   final TextEditingController _barcodeController = TextEditingController();
   final TextEditingController _stockController = TextEditingController();
   final TextEditingController _packCostController = TextEditingController(); 
+  final TextEditingController _unitCostController = TextEditingController(); 
   final TextEditingController _piecesPerPackController = TextEditingController(text: '20'); 
   final TextEditingController _sellingPriceController = TextEditingController();
 
@@ -47,16 +48,29 @@ class _AddItemScreenState extends State<AddItemScreen> {
     if (widget.initialData != null) {
       final data = widget.initialData!;
       
-      // THIS IS THE KEY LINE: Ensure it checks for 'itemName'
       _itemNameController.text = data['itemName'] ?? ''; 
       _barcodeController.text = data['barcode'] ?? '';
-      _stockController.text = (data['stock'] ?? '').toString();
-      _packCostController.text = (data['totalPackCost'] ?? data['cost'] ?? '').toString();
-      _piecesPerPackController.text = (data['piecesPerPack'] ?? 20).toString();
+      
+      int pieces = (data['piecesPerPack'] ?? 1).toInt();
+      _isTingiMode = pieces > 1;
+
+      int rawStock = (data['stock'] ?? 0).toInt();
+      if (_isTingiMode && pieces > 0) {
+        _stockController.text = (rawStock ~/ pieces).toString();
+      } else {
+        _stockController.text = rawStock.toString();
+      }
+
+      _piecesPerPackController.text = pieces.toString();
       _sellingPriceController.text = (data['price'] ?? '').toString();
       _selectedCategory = data['category'] ?? 'Food Products & Staples';
       _imagePath = data['imagePath'] ?? data['imageUrl'];
-      _isTingiMode = data['piecesPerPack'] != null && (data['piecesPerPack'] as num) > 1;
+
+      if (_isTingiMode) {
+        _packCostController.text = (data['totalPackCost'] ?? (data['cost'] * pieces)).toString();
+      } else {
+        _unitCostController.text = (data['cost'] ?? '').toString();
+      }
     }
   }
 
@@ -66,12 +80,12 @@ class _AddItemScreenState extends State<AddItemScreen> {
     _barcodeController.dispose();
     _stockController.dispose();
     _packCostController.dispose();
+    _unitCostController.dispose();
     _piecesPerPackController.dispose();
     _sellingPriceController.dispose();
     super.dispose();
   }
 
-  // --- LAUNCH CAMERA SCANNER TO AUTO-FILL ITEM DETAILS ---
   Future<void> _scanAndAutoFill() async {
     final scannedResult = await Navigator.push(
       context,
@@ -83,7 +97,6 @@ class _AddItemScreenState extends State<AddItemScreen> {
         _barcodeController.text = scannedResult;
       });
 
-      // Optional: Check if this barcode exists elsewhere in Firestore
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
         final query = await FirebaseFirestore.instance
@@ -97,8 +110,17 @@ class _AddItemScreenState extends State<AddItemScreen> {
           setState(() {
             _itemNameController.text = existingData['itemName'] ?? '';
             _selectedCategory = existingData['category'] ?? _selectedCategory;
-            _packCostController.text = (existingData['totalPackCost'] ?? existingData['cost'] ?? '').toString();
             _sellingPriceController.text = (existingData['price'] ?? '').toString();
+            
+            int pieces = (existingData['piecesPerPack'] ?? 1).toInt();
+            _isTingiMode = pieces > 1;
+            _piecesPerPackController.text = pieces.toString();
+            
+            if (_isTingiMode) {
+              _packCostController.text = (existingData['totalPackCost'] ?? '').toString();
+            } else {
+              _unitCostController.text = (existingData['cost'] ?? '').toString();
+            }
           });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("Existing item details auto-filled from barcode!"), backgroundColor: Colors.green),
@@ -121,20 +143,96 @@ class _AddItemScreenState extends State<AddItemScreen> {
     setState(() => _isLoading = true);
 
     try {
+      String normalize(String input) {
+        return input.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+      }
+
       final itemName = _itemNameController.text.trim();
+      final normalizedInputName = normalize(itemName);
       final barcode = _barcodeController.text.trim();
-      final int stock = int.parse(_stockController.text.trim());
-      
-      final double inputCost = double.parse(_packCostController.text.trim());
+
+      if (widget.documentId == null) {
+        QuerySnapshot duplicateCheckQuery = await FirebaseFirestore.instance
+            .collection('Inventory')
+            .where('userId', isEqualTo: user.uid)
+            .get();
+
+        bool isDuplicate = duplicateCheckQuery.docs.any((doc) {
+          var data = doc.data() as Map<String, dynamic>;
+          String existingName = (data['itemName'] ?? '').toString();
+          String normalizedExistingName = normalize(existingName);
+          String existingBarcode = (data['barcode'] ?? '').toString().trim();
+
+          bool nameMatch = normalizedExistingName.isNotEmpty && normalizedExistingName == normalizedInputName;
+          bool barcodeMatch = barcode.isNotEmpty && existingBarcode == barcode;
+
+          return nameMatch || barcodeMatch;
+        });
+
+        if (isDuplicate) {
+          if (!mounted) return;
+          
+          bool? confirmAdd = await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) {
+              final bool isDark = Theme.of(context).brightness == Brightness.dark;
+              return AlertDialog(
+                backgroundColor: isDark ? fbCardBg : Colors.white,
+                title: Text(
+                  "Item Already Exists",
+                  style: TextStyle(color: isDark ? Colors.white : navyBlue, fontWeight: FontWeight.bold),
+                ),
+                content: Text(
+                  "An item with a similar name ('$itemName')${barcode.isNotEmpty ? " or barcode '$barcode'" : ""} is already in your inventory. Are you sure you want to add it again?",
+                  style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: tealAccent),
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text("Add Anyway", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              );
+            },
+          );
+
+          if (confirmAdd != true) {
+            setState(() => _isLoading = false);
+            return; 
+          }
+        }
+      }
+
+      final int inputStock = int.parse(_stockController.text.trim());
       final int piecesPerPack = _isTingiMode ? int.parse(_piecesPerPackController.text.trim()) : 1;
       
-      final double unitCost = (_isTingiMode && piecesPerPack > 0) ? (inputCost / piecesPerPack) : inputCost;
+      final int totalPiecesStock = _isTingiMode ? (inputStock * piecesPerPack) : inputStock;
+
+      double inputCost = 0.0;
+      double unitCost = 0.0;
+      double totalPackCostStored = 0.0;
+
+      if (_isTingiMode) {
+        inputCost = double.parse(_packCostController.text.trim());
+        unitCost = piecesPerPack > 0 ? (inputCost / piecesPerPack) : inputCost;
+        totalPackCostStored = inputCost;
+      } else {
+        unitCost = double.parse(_unitCostController.text.trim());
+        totalPackCostStored = 0.0;
+      }
+
       final double sellingPrice = double.parse(_sellingPriceController.text.trim());
 
       String status = 'In Stock';
-      if (stock <= 0) {
+      if (totalPiecesStock <= 0) {
         status = 'Critical';
-      } else if (stock <= 5) {
+      } else if (totalPiecesStock <= 5) {
         status = 'Low Stock';
       }
 
@@ -142,9 +240,9 @@ class _AddItemScreenState extends State<AddItemScreen> {
         'userId': user.uid,
         'itemName': itemName,
         'barcode': barcode,
-        'stock': stock,
+        'stock': totalPiecesStock, 
         'cost': unitCost, 
-        'totalPackCost': _isTingiMode ? inputCost : 0.0, 
+        'totalPackCost': totalPackCostStored, 
         'piecesPerPack': piecesPerPack,
         'price': sellingPrice, 
         'category': _selectedCategory,
@@ -178,6 +276,13 @@ class _AddItemScreenState extends State<AddItemScreen> {
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    double previewPackCost = double.tryParse(_packCostController.text) ?? 0.0;
+    int previewPieces = int.tryParse(_piecesPerPackController.text) ?? 1;
+    double liveUnitCost = (_isTingiMode && previewPieces > 0) ? (previewPackCost / previewPieces) : 0.0;
+
+    int inputStockVal = int.tryParse(_stockController.text) ?? 0;
+    int computedTotalPieces = _isTingiMode ? (inputStockVal * previewPieces) : inputStockVal;
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF18191A) : navyBlue,
@@ -224,6 +329,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                   const SizedBox(height: 20),
                 ],
 
+                // --- ITEM NAME ---
                 const Text("Item Name", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                 const SizedBox(height: 8),
                 TextFormField(
@@ -233,6 +339,16 @@ class _AddItemScreenState extends State<AddItemScreen> {
                 ),
                 const SizedBox(height: 16),
 
+                // --- BARCODE / SKU ---
+                const Text("Barcode / SKU", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _barcodeController,
+                  decoration: _inputDecoration("Scan or type barcode"),
+                ),
+                const SizedBox(height: 16),
+
+                // --- CATEGORY ---
                 const Text("Category", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
@@ -243,42 +359,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("Initial Stock (Pcs)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _stockController,
-                            keyboardType: TextInputType.number,
-                            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                            decoration: _inputDecoration("e.g., 100"),
-                            validator: (val) => val == null || val.isEmpty ? "Required" : null,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("Barcode / SKU", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          const SizedBox(height: 8),
-                          TextFormField(
-                            controller: _barcodeController,
-                            decoration: _inputDecoration("Scan or type"),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
+                // --- TINGI TOGGLE ---
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
@@ -296,36 +377,66 @@ class _AddItemScreenState extends State<AddItemScreen> {
                 ),
                 const SizedBox(height: 16),
 
+                // --- DYNAMIC STOCK LABEL & INPUT ---
+                Text(
+                  _isTingiMode ? "Stock (Packs / Boxes)" : "Stock (Pcs)",
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _stockController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  onChanged: (_) => setState(() {}),
+                  decoration: _inputDecoration(_isTingiMode ? "e.g., 5 packs" : "e.g., 100 pcs"),
+                  validator: (val) => val == null || val.isEmpty ? "Required" : null,
+                ),
+                const SizedBox(height: 6),
+                if (_isTingiMode && inputStockVal > 0 && previewPieces > 0)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                    child: Text(
+                      "Total Individual Pieces: $computedTotalPieces pcs ($inputStockVal packs × $previewPieces pcs)",
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                const SizedBox(height: 16),
+
+                // --- COST INPUTS ---
                 if (_isTingiMode) ...[
                   Row(
                     children: [
                       Expanded(
+                        flex: 3,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text("Capital Cost per Whole Pack (₱)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            const Text("Total Pack/Box Cost (₱)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                             const SizedBox(height: 8),
                             TextFormField(
                               controller: _packCostController,
                               keyboardType: const TextInputType.numberWithOptions(decimal: true),
                               inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
+                              onChanged: (_) => setState(() {}),
                               decoration: _inputDecoration("e.g., 180"),
-                              validator: (val) => val == null || val.isEmpty ? "Required" : null,
+                              validator: (val) => _isTingiMode && (val == null || val.isEmpty) ? "Required" : null,
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: 12),
                       Expanded(
+                        flex: 2,
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text("Pieces per Pack", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            const Text("Pieces / Pack", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                             const SizedBox(height: 8),
                             TextFormField(
                               controller: _piecesPerPackController,
                               keyboardType: TextInputType.number,
                               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                              onChanged: (_) => setState(() {}),
                               decoration: _inputDecoration("e.g., 20"),
                               validator: (val) => _isTingiMode && (val == null || val.isEmpty || int.parse(val) <= 0) ? "Invalid" : null,
                             ),
@@ -334,20 +445,30 @@ class _AddItemScreenState extends State<AddItemScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 6),
+                  if (previewPackCost > 0 && previewPieces > 0)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                      child: Text(
+                        "Computed Cost: ₱${liveUnitCost.toStringAsFixed(2)} per piece",
+                        style: TextStyle(color: tealAccent, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                    ),
                   const SizedBox(height: 16),
                 ] else ...[
                   const Text("Capital Cost per Piece (₱)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                   const SizedBox(height: 8),
                   TextFormField(
-                    controller: _packCostController,
+                    controller: _unitCostController,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
                     decoration: _inputDecoration("e.g., 9.00"),
-                    validator: (val) => val == null || val.isEmpty ? "Required" : null,
+                    validator: (val) => !_isTingiMode && (val == null || val.isEmpty) ? "Required" : null,
                   ),
                   const SizedBox(height: 16),
                 ],
 
+                // --- SELLING PRICE ---
                 const Text("Selling Price per Piece (₱)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                 const SizedBox(height: 8),
                 TextFormField(
@@ -359,6 +480,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                 ),
                 const SizedBox(height: 32),
 
+                // --- SAVE BUTTON ---
                 SizedBox(
                   width: double.infinity,
                   height: 50,

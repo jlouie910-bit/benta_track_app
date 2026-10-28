@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 class TermsConditionsScreen extends StatelessWidget {
   const TermsConditionsScreen({super.key});
 
-  // Re-established Navy Blue Palette
   static const Color navyBlue = Color(0xFF1E3A5F);
   static const Color lightBg = Color(0xFFF5F5F5);
 
@@ -16,18 +15,21 @@ class TermsConditionsScreen extends StatelessWidget {
       child: Scaffold(
         backgroundColor: isDark ? const Color(0xFF18191A) : lightBg,
         appBar: AppBar(
-          title: const Text("Legal Information",
-              style: TextStyle(fontWeight: FontWeight.bold)),
+          title: const Text(
+            "Legal & Compliance",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
           backgroundColor: navyBlue,
           foregroundColor: Colors.white,
           elevation: 0,
           centerTitle: true,
-          bottom: const TabBar(
-            indicatorColor: Colors.white,
+          bottom: TabBar(
+            indicatorColor: Colors.cyanAccent,
             labelColor: Colors.white,
-            unselectedLabelColor: Colors.white70,
+            unselectedLabelColor: Colors.white60,
             indicatorWeight: 3,
-            tabs: [
+            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            tabs: const [
               Tab(text: "Terms of Service"),
               Tab(text: "Privacy Policy"),
             ],
@@ -38,8 +40,8 @@ class TermsConditionsScreen extends StatelessWidget {
             Expanded(
               child: TabBarView(
                 children: [
-                  _legalTabContent(_termsOfService(), isDark),
-                  _legalTabContent(_privacyPolicy(), isDark),
+                  _legalTabContent(_termsOfService(isDark), isDark),
+                  _legalTabContent(_privacyPolicy(isDark), isDark),
                 ],
               ),
             ),
@@ -53,51 +55,105 @@ class TermsConditionsScreen extends StatelessWidget {
   Widget _legalTabContent(List<Widget> sections, bool isDark) {
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: sections,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: navyBlue.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: navyBlue.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, color: navyBlue, size: 20),
+                const SizedBox(width: 10),
+                Text(
+                  "Effective Date: October 2026",
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: isDark ? Colors.white70 : navyBlue,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          ...sections,
+        ],
       ),
     );
   }
 
-  List<Widget> _termsOfService() {
+  List<Widget> _termsOfService(bool isDark) {
     return [
-      _sectionTitle("1. Agreement to Terms"),
-      _sectionText("By accessing the application, you agree to be bound by these Terms of Service. This platform is designed for micro-enterprises in the Philippines to facilitate inventory and sales management."),
-      _sectionTitle("2. Service Description"),
-      _sectionText("We provide an Inventory Tracking Mobile Application. We reserve the right to modify or discontinue features to improve system performance."),
-      _sectionTitle("3. User Conduct"),
-      _sectionText("Users are prohibited from attempting to reverse-engineer application models or using the platform for fraudulent business transactions."),
-      _sectionTitle("4. Disclaimer of Warranties"),
-      _sectionText("The service is provided 'as is' without warranties of any kind."),
+      _sectionTitle("Acceptance of Terms"),
+      _sectionText(
+        "By accessing, registering, or using BentaTrack, you agree to be legally bound by these Terms of Service. If you disagree with any portion of these terms, you must immediately discontinue use of the mobile application.",
+        isDark,
+      ),
+      _sectionTitle("Scope of Service"),
+      _sectionText(
+        "BentaTrack provides a cloud-integrated inventory and sales management platform tailored for micro and small enterprises (MSEs) in the Philippines. We reserve the right to modify, suspend, or terminate features or service availability at any time for system maintenance, security updates, or functional upgrades.",
+        isDark,
+      ),
+      _sectionTitle("User Accounts & Security"),
+      _sectionText(
+        "You are entirely responsible for maintaining the strict confidentiality of your account credentials, password, and 4-digit security MPIN. BentaTrack shall not be held liable for any loss, unauthorized modifications, or damages arising from your failure to safeguard your account information.",
+        isDark,
+      ),
+      _sectionTitle("Acceptable Use Policy"),
+      _sectionText(
+        "Users are strictly prohibited from reverse-engineering the application architecture, attempting unauthorized database breaches, uploading malicious code, or utilizing the platform for fraudulent or unlawful commercial transactions.",
+        isDark,
+      ),
+      _sectionTitle("Limitation of Liability"),
+      _sectionText(
+        "The application is provided on an 'as is' and 'as available' basis without warranties of any kind, whether express or implied. BentaTrack does not guarantee uninterrupted operational availability or complete error-free data synchronization under unstable network conditions.",
+        isDark,
+      ),
     ];
   }
 
-  List<Widget> _privacyPolicy() {
+  List<Widget> _privacyPolicy(bool isDark) {
     return [
-      _sectionTitle("1. Data Collection"),
-      _sectionText("We collect your store name and email used for inventory processing. Inputted items are used solely for identification."),
-      _sectionTitle("2. Use of Data"),
-      _sectionText("Data is utilized for business analytics and records. We do not sell or share business data with unauthorized third parties."),
-      _sectionTitle("3. Storage & Security"),
-      _sectionText("We utilize cloud-based encrypted storage. Sensitive actions are protected by your 4-digit security MPIN."),
-      _sectionTitle("4. Third-Party Services"),
-      _sectionText("By using this app, you adhere to standard cloud provider policies regarding authentication and database management."),
+      _sectionTitle("Information We Collect"),
+      _sectionText(
+        "To provide effective inventory processing and authentication services, we collect account registration data including your store name, business email address, and encrypted security parameters (such as your MPIN). Inventory records and product metrics entered are securely stored under your account identifier.",
+        isDark,
+      ),
+      _sectionTitle("Utilization of Data"),
+      _sectionText(
+        "Collected information is utilized exclusively for generating business analytics, tracking stock performance, and operating core application features. We do not sell, trade, or transfer your proprietary business records or personal identifiers to unauthorized third parties.",
+        isDark,
+      ),
+      _sectionTitle("Cloud Storage & Data Security"),
+      _sectionText(
+        "We implement industry-standard encryption protocols and secure cloud databases (Firebase) to protect your records. Sensitive account configurations and verification checks are further secured using localized PIN protection.",
+        isDark,
+      ),
+      _sectionTitle("Compliance with Privacy Laws"),
+      _sectionText(
+        "Our data processing practices adhere to standard data privacy principles, respecting user confidentiality, data minimization, and secure account management rights.",
+        isDark,
+      ),
     ];
   }
 
   Widget _bottomActionArea(BuildContext context, bool isDark) {
     return Container(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 30),
+      padding: const EdgeInsets.fromLTRB(20, 15, 20, 25),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF242526) : Colors.white,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 10,
-            offset: const Offset(0, -5),
+            offset: const Offset(0, -4),
           ),
         ],
       ),
@@ -106,28 +162,32 @@ class TermsConditionsScreen extends StatelessWidget {
         children: [
           SizedBox(
             width: double.infinity,
-            height: 55,
+            height: 50,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: navyBlue,
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 elevation: 0,
               ),
               onPressed: () => Navigator.pop(context),
-              child: const Text("Accept & Continue",
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              child: const Text(
+                "Acknowledge & Close",
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           TextButton(
             onPressed: () => showLicensePage(
               context: context,
               applicationName: 'BentaTrack',
               applicationVersion: '1.0.0',
             ),
-            child: const Text("View Third-Party Notices",
-                style: TextStyle(color: Colors.grey, fontSize: 13)),
+            child: const Text(
+              "View Third-Party Open Source Notices",
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
           ),
         ],
       ),
@@ -136,25 +196,27 @@ class TermsConditionsScreen extends StatelessWidget {
 
   Widget _sectionTitle(String title) {
     return Padding(
-      padding: const EdgeInsets.only(top: 20, bottom: 8),
+      padding: const EdgeInsets.only(top: 22, bottom: 8),
       child: Text(
         title,
         style: const TextStyle(
           color: navyBlue,
-          fontSize: 16,
+          fontSize: 15,
           fontWeight: FontWeight.bold,
+          letterSpacing: 0.3,
         ),
       ),
     );
   }
 
-  Widget _sectionText(String text) {
+  Widget _sectionText(String text, bool isDark) {
     return Text(
       text,
-      style: const TextStyle(
-          fontSize: 14,
-          height: 1.6,
-          fontWeight: FontWeight.w400
+      style: TextStyle(
+        fontSize: 13.5,
+        height: 1.6,
+        fontWeight: FontWeight.normal,
+        color: isDark ? Colors.white70 : Colors.black87,
       ),
     );
   }
