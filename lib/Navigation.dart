@@ -35,6 +35,7 @@ class _MainNavigationState extends State<MainNavigation> {
       _selectedIndex = index;
     });
   }
+
   void _snapToEdges() {
     double screenWidth = MediaQuery.of(context).size.width;
     double screenHeight = MediaQuery.of(context).size.height;
@@ -85,12 +86,12 @@ class _MainNavigationState extends State<MainNavigation> {
                 width: 55,
                 height: 55,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1E3A5F).withOpacity(0.9), // Navy Blue
+                  color: const Color(0xFF1E3A5F).withValues(alpha: 0.9), // Navy Blue
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white24, width: 2),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
+                      color: Colors.black.withValues(alpha: 0.3),
                       blurRadius: 12,
                       offset: const Offset(0, 4),
                     ),

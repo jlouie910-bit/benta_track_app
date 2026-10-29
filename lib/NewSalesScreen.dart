@@ -1,9 +1,7 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
 import 'Camera.dart';
 import 'add_items_screen.dart';
 
@@ -21,6 +19,17 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
   // Cart item schema: { id, name, price, cost, quantity, maxStock, isSellingAsPack, piecesPerPack }
   final List<Map<String, dynamic>> _cartItems = [];
   double _totalAmount = 0.0;
+
+  // Standard Sari-Sari Store Categories
+  final List<String> _standardCategories = [
+    'Canned Goods & Staples',
+    'Snacks & Treats',
+    'Beverages & Drinks',
+    'Condiments & Sauces',
+    'Personal Care & Hygiene',
+    'Household & Cleaning Supplies',
+    'Cigarettes & Tobacco',
+  ];
 
   void _calculateTotal() {
     double total = 0;
@@ -91,29 +100,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
       }
       _calculateTotal();
     });
-  }
-
-  Future<Map<String, dynamic>?> _fetchProductFromGlobalAPI(String barcode) async {
-    try {
-      final url = Uri.parse('https://world.openfoodfacts.org/api/v0/product/$barcode.json');
-      final response = await http.get(url);
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['status'] == 1 && data['product'] != null) {
-          final product = data['product'];
-          return {
-            'itemName': product['product_name'] ?? 'Unknown Product',
-            'category': 'Food Products & Staples',
-            'imageUrl': product['image_url'] ?? '',
-            'barcode': barcode,
-          };
-        }
-      }
-    } catch (e) {
-      debugPrint("Error connecting to Open Food Facts API: $e");
-    }
-    return null;
   }
 
   Future<void> _verifyAndNavigateToAddItemWithData(Map<String, dynamic> initialData) async {
@@ -221,307 +207,357 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     );
   }
 
+  void _showEditQuantityDialog(StateSetter setModalState, String docId, int currentQty, int maxLimit, Map<String, Map<String, dynamic>> tempSelections) {
+    final TextEditingController qtyController = TextEditingController(text: currentQty.toString());
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("Enter Quantity", style: TextStyle(fontWeight: FontWeight.bold)),
+        content: TextField(
+          controller: qtyController,
+          keyboardType: TextInputType.number,
+          autofocus: true,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+          decoration: InputDecoration(
+            hintText: "Enter qty",
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: navyBlue),
+            onPressed: () {
+              int? parsed = int.tryParse(qtyController.text);
+              if (parsed != null && parsed > 0) {
+                if (parsed <= maxLimit) {
+                  setModalState(() {
+                    tempSelections[docId]!['qty'] = parsed;
+                  });
+                } else {
+                  setModalState(() {
+                    tempSelections[docId]!['qty'] = maxLimit;
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Quantity adjusted to maximum available stock!")),
+                  );
+                }
+              }
+              Navigator.pop(context);
+            },
+            child: const Text("Set", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _openMultiSelectSearchModal() async {
     if (user == null) return;
 
     final Map<String, Map<String, dynamic>> tempSelections = {}; 
     String searchQuery = "";
+    String selectedCategory = "All Categories";
 
-    await showModalBottomSheet(
+    await showDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      barrierDismissible: true,
       builder: (context) => StatefulBuilder(
-        builder: (context, setModalState) => Container(
-          height: MediaQuery.of(context).size.height * 0.8,
-          decoration: BoxDecoration(
-            color: Theme.of(context).brightness == Brightness.dark ? const Color(0xFF1C1C1E) : Colors.white,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
-          ),
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            children: [
-              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[400], borderRadius: BorderRadius.circular(2))),
-              const SizedBox(height: 15),
-              const Text("Search & Select Items", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              const Text("Choose item quantity and selling mode (Piece vs Pack)", style: TextStyle(color: Colors.grey, fontSize: 12)),
-              const SizedBox(height: 15),
-              TextField(
-                decoration: InputDecoration(
-                  hintText: "Search item name or barcode...",
-                  prefixIcon: const Icon(Icons.search),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                ),
-                onChanged: (val) {
-                  setModalState(() {
-                    searchQuery = val.trim().toLowerCase();
-                  });
-                },
-              ),
-              const Divider(height: 25),
-              Expanded(
-                child: StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance
-                      .collection('Inventory')
-                      .where('userId', isEqualTo: user?.uid)
-                      .snapshots(),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                      return const Center(child: Text("No items available in inventory."));
-                    }
+        builder: (context, setModalState) {
+          final bool isDark = Theme.of(context).brightness == Brightness.dark;
+          return AlertDialog(
+            backgroundColor: isDark ? const Color(0xFF242526) : Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Text("Search & Select Items", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            content: SizedBox(
+              width: MediaQuery.of(context).size.width * 0.85,
+              height: MediaQuery.of(context).size.height * 0.60,
+              child: Column(
+                children: [
+                  TextField(
+                    decoration: InputDecoration(
+                      hintText: "Search item name or barcode...",
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    ),
+                    onChanged: (val) {
+                      setModalState(() {
+                        searchQuery = val.trim().toLowerCase();
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance
+                        .collection('Inventory')
+                        .where('userId', isEqualTo: user?.uid)
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      Set<String> categories = {"All Categories"};
+                      categories.addAll(_standardCategories);
 
-                    final docs = snapshot.data!.docs.where((doc) {
-                      final data = doc.data() as Map<String, dynamic>;
-                      final itemName = (data['itemName'] ?? '').toString().toLowerCase();
-                      final barcode = (data['barcode'] ?? '').toString().toLowerCase();
-                      if (searchQuery.isEmpty) return true;
-                      return itemName.contains(searchQuery) || barcode.contains(searchQuery);
-                    }).toList();
+                      if (snapshot.hasData) {
+                        for (var doc in snapshot.data!.docs) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          String? cat = data['category'];
+                          if (cat != null && cat.isNotEmpty) {
+                            categories.add(cat);
+                          }
+                        }
+                      }
 
-                    if (docs.isEmpty) {
-                      return const Center(child: Text("No matching items found in database."));
-                    }
+                      if (!categories.contains(selectedCategory)) {
+                        selectedCategory = "All Categories";
+                      }
 
-                    return ListView.builder(
-                      itemCount: docs.length,
-                      itemBuilder: (context, index) {
-                        final doc = docs[index];
-                        final data = doc.data() as Map<String, dynamic>;
-                        final docId = doc.id;
-                        final itemName = data['itemName'] ?? 'Unknown Item';
-                        final price = (data['price'] as num?)?.toDouble() ?? 0.0;
-                        final stock = (data['stock'] as num?)?.toInt() ?? 0;
-                        final piecesPerPack = (data['piecesPerPack'] as num?)?.toInt() ?? 1;
-                        bool hasPackOption = piecesPerPack > 1;
+                      return DropdownButtonFormField<String>(
+                        value: selectedCategory,
+                        decoration: InputDecoration(
+                          labelText: "Filter Category",
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        items: categories.map((cat) {
+                          return DropdownMenuItem(value: cat, child: Text(cat, style: const TextStyle(fontSize: 13)));
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setModalState(() {
+                              selectedCategory = val;
+                            });
+                          }
+                        },
+                      );
+                    },
+                  ),
+                  const Divider(height: 20),
+                  Expanded(
+                    child: StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance
+                          .collection('Inventory')
+                          .where('userId', isEqualTo: user?.uid)
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return const Center(child: CircularProgressIndicator());
+                        }
+                        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                          return const Center(child: Text("No items available."));
+                        }
 
-                        bool isSelected = tempSelections.containsKey(docId);
-                        int qty = isSelected ? tempSelections[docId]!['qty'] : 1;
-                        bool isPackMode = isSelected ? tempSelections[docId]!['isPack'] : false;
+                        final docs = snapshot.data!.docs.where((doc) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          final itemName = (data['itemName'] ?? '').toString().toLowerCase();
+                          final barcode = (data['barcode'] ?? '').toString().toLowerCase();
+                          final category = data['category'] ?? 'Others';
 
-                        double displayPrice = isPackMode ? (price * piecesPerPack) : price;
-                        int maxLimit = isPackMode ? (stock ~/ piecesPerPack) : stock;
+                          if (selectedCategory != "All Categories" && category != selectedCategory) {
+                            return false;
+                          }
 
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 10),
-                          child: Padding(
-                            padding: const EdgeInsets.all(10.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          if (searchQuery.isNotEmpty) {
+                            return itemName.contains(searchQuery) || barcode.contains(searchQuery);
+                          }
+                          return true;
+                        }).toList();
+
+                        if (docs.isEmpty) {
+                          return const Center(child: Text("No matching items found."));
+                        }
+
+                        return ListView.builder(
+                          itemCount: docs.length,
+                          itemBuilder: (context, index) {
+                            final doc = docs[index];
+                            final data = doc.data() as Map<String, dynamic>;
+                            final docId = doc.id;
+                            final itemName = data['itemName'] ?? 'Unknown Item';
+                            final price = (data['price'] as num?)?.toDouble() ?? 0.0;
+                            final stock = (data['stock'] as num?)?.toInt() ?? 0;
+                            final piecesPerPack = (data['piecesPerPack'] as num?)?.toInt() ?? 1;
+                            bool hasPackOption = piecesPerPack > 1;
+
+                            bool isSelected = tempSelections.containsKey(docId);
+                            int qty = isSelected ? tempSelections[docId]!['qty'] : 1;
+                            bool isPackMode = isSelected ? tempSelections[docId]!['isPack'] : false;
+
+                            double displayPrice = isPackMode ? (price * piecesPerPack) : price;
+                            int maxLimit = isPackMode ? (stock ~/ piecesPerPack) : stock;
+
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              child: Padding(
+                                padding: const EdgeInsets.all(8.0),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Expanded(
-                                      child: Text(itemName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Expanded(
+                                          child: Text(itemName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                        ),
+                                        Text("Stock: $stock", style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                                      ],
                                     ),
-                                    Text("Stock: $stock pcs", style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                                  ],
-                                ),
-                                const SizedBox(height: 5),
-                                Text("Price: ₱${displayPrice.toStringAsFixed(2)} ${isPackMode ? '(Pack)' : '(Piece)'}", 
-                                  style: TextStyle(color: navyBlue, fontWeight: FontWeight.w600, fontSize: 13)),
-                                const SizedBox(height: 5),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    // FIXED: Wrapped in Flexible to prevent overflow
-                                    Flexible(
-                                      child: hasPackOption
-                                          ? ChoiceChip(
-                                              label: Text(
-                                                isPackMode ? "Pack ($piecesPerPack pcs)" : "Piece",
-                                                style: const TextStyle(fontSize: 11),
+                                    const SizedBox(height: 4),
+                                    Text("₱${displayPrice.toStringAsFixed(2)} ${isPackMode ? '(Pack)' : '(Piece)'}", 
+                                      style: TextStyle(color: navyBlue, fontWeight: FontWeight.w600, fontSize: 12)),
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Flexible(
+                                          child: hasPackOption
+                                              ? ChoiceChip(
+                                                  label: Text(
+                                                    isPackMode ? "Pack ($piecesPerPack pcs)" : "Piece",
+                                                    style: const TextStyle(fontSize: 10),
+                                                  ),
+                                                  selected: isPackMode,
+                                                  selectedColor: Colors.teal.shade100,
+                                                  onSelected: (val) {
+                                                    setModalState(() {
+                                                      if (isSelected) {
+                                                        tempSelections[docId]!['isPack'] = val;
+                                                      } else {
+                                                        tempSelections[docId] = {'qty': 1, 'isPack': val};
+                                                      }
+                                                    });
+                                                  },
+                                                )
+                                              : const Text("Piece only", style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                        ),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            if (isSelected) ...[
+                                              IconButton(
+                                                constraints: const BoxConstraints(),
+                                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                                icon: const Icon(Icons.remove, size: 16),
+                                                onPressed: () {
+                                                  setModalState(() {
+                                                    if (qty > 1) {
+                                                      tempSelections[docId]!['qty'] = qty - 1;
+                                                    } else {
+                                                      tempSelections.remove(docId);
+                                                    }
+                                                  });
+                                                },
                                               ),
-                                              selected: isPackMode,
-                                              selectedColor: Colors.teal.shade100,
-                                              onSelected: (val) {
+                                              GestureDetector(
+                                                onTap: () => _showEditQuantityDialog(setModalState, docId, qty, maxLimit, tempSelections),
+                                                child: Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                  decoration: BoxDecoration(
+                                                    color: navyBlue.withValues(alpha: 0.1),
+                                                    borderRadius: BorderRadius.circular(6),
+                                                    border: Border.all(color: navyBlue.withValues(alpha: 0.3)),
+                                                  ),
+                                                  child: Text(
+                                                    "$qty", 
+                                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: navyBlue),
+                                                  ),
+                                                ),
+                                              ),
+                                              IconButton(
+                                                constraints: const BoxConstraints(),
+                                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                                icon: const Icon(Icons.add, size: 16),
+                                                onPressed: () {
+                                                  setModalState(() {
+                                                    if (qty < maxLimit) {
+                                                      tempSelections[docId]!['qty'] = qty + 1;
+                                                    } else {
+                                                      ScaffoldMessenger.of(context).showSnackBar(
+                                                        const SnackBar(content: Text("Cannot exceed available stock!")),
+                                                      );
+                                                    }
+                                                  });
+                                                },
+                                              ),
+                                            ],
+                                            Checkbox(
+                                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                              activeColor: navyBlue,
+                                              value: isSelected,
+                                              onChanged: (bool? value) {
                                                 setModalState(() {
-                                                  if (isSelected) {
-                                                    tempSelections[docId]!['isPack'] = val;
+                                                  if (value == true) {
+                                                    tempSelections[docId] = {'qty': 1, 'isPack': false};
                                                   } else {
-                                                    tempSelections[docId] = {'qty': 1, 'isPack': val};
+                                                    tempSelections.remove(docId);
                                                   }
                                                 });
                                               },
-                                            )
-                                          : const Text("Piece only", style: TextStyle(fontSize: 11, color: Colors.grey)),
-                                    ),
-                                    
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        if (isSelected) ...[
-                                          IconButton(
-                                            constraints: const BoxConstraints(),
-                                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                                            icon: const Icon(Icons.remove, size: 18),
-                                            onPressed: () {
-                                              setModalState(() {
-                                                if (qty > 1) {
-                                                  tempSelections[docId]!['qty'] = qty - 1;
-                                                } else {
-                                                  tempSelections.remove(docId);
-                                                }
-                                              });
-                                            },
-                                          ),
-                                          InkWell(
-                                            onTap: () async {
-                                              final TextEditingController manualController = TextEditingController(text: qty.toString());
-                                              await showDialog(
-                                                context: context,
-                                                builder: (context) => AlertDialog(
-                                                  title: const Text("Enter Quantity", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                                  content: TextField(
-                                                    controller: manualController,
-                                                    keyboardType: TextInputType.number,
-                                                    autofocus: true,
-                                                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                                                    decoration: InputDecoration(
-                                                      hintText: "Max: $maxLimit",
-                                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                                                    ),
-                                                  ),
-                                                  actions: [
-                                                    TextButton(
-                                                      onPressed: () => Navigator.pop(context),
-                                                      child: const Text("Cancel"),
-                                                    ),
-                                                    ElevatedButton(
-                                                      style: ElevatedButton.styleFrom(backgroundColor: navyBlue),
-                                                      onPressed: () {
-                                                        int? enteredVal = int.tryParse(manualController.text.trim());
-                                                        if (enteredVal != null && enteredVal > 0) {
-                                                          if (enteredVal <= maxLimit) {
-                                                            setModalState(() {
-                                                              tempSelections[docId]!['qty'] = enteredVal;
-                                                            });
-                                                          } else {
-                                                            ScaffoldMessenger.of(context).showSnackBar(
-                                                              const SnackBar(content: Text("Exceeds available stock limit!"), backgroundColor: Colors.red),
-                                                            );
-                                                          }
-                                                        }
-                                                        Navigator.pop(context);
-                                                      },
-                                                      child: const Text("OK", style: TextStyle(color: Colors.white)),
-                                                    ),
-                                                  ],
-                                                ),
-                                              );
-                                            },
-                                            child: Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                              decoration: BoxDecoration(
-                                                border: Border.all(color: Colors.grey.shade400),
-                                                borderRadius: BorderRadius.circular(6),
-                                              ),
-                                              child: Text("$qty", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                                             ),
-                                          ),
-                                          IconButton(
-                                            constraints: const BoxConstraints(),
-                                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                                            icon: const Icon(Icons.add, size: 18),
-                                            onPressed: () {
-                                              setModalState(() {
-                                                if (qty < maxLimit) {
-                                                  tempSelections[docId]!['qty'] = qty + 1;
-                                                }
-                                              });
-                                            },
-                                          ),
-                                        ],
-                                        Checkbox(
-                                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                          activeColor: navyBlue,
-                                          value: isSelected,
-                                          onChanged: (bool? value) {
-                                            setModalState(() {
-                                              if (value == true) {
-                                                tempSelections[docId] = {'qty': 1, 'isPack': false};
-                                              } else {
-                                                tempSelections.remove(docId);
-                                              }
-                                            });
-                                          },
+                                          ],
                                         ),
                                       ],
                                     ),
                                   ],
                                 ),
-                              ],
-                            ),
-                          ),
+                              ),
+                            );
+                          },
                         );
                       },
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: navyBlue,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      onPressed: () async {
-                        if (tempSelections.isEmpty) {
-                          Navigator.pop(context);
-                          return;
-                        }
-
-                        for (var entry in tempSelections.entries) {
-                          final docRef = await FirebaseFirestore.instance.collection('Inventory').doc(entry.key).get();
-                          if (docRef.exists) {
-                            final data = docRef.data() as Map<String, dynamic>;
-                            _addItemToCart(
-                              id: entry.key,
-                              name: data['itemName'] ?? 'Unknown',
-                              piecePrice: (data['price'] as num?)?.toDouble() ?? 0.0,
-                              pieceCost: (data['cost'] as num?)?.toDouble() ?? 0.0,
-                              stock: (data['stock'] as num?)?.toInt() ?? 0,
-                              quantityToAdd: entry.value['qty'],
-                              piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
-                              isSellingAsPack: entry.value['isPack'],
-                            );
-                          }
-                        }
-
-                        if (context.mounted) {
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("Selected items added to cart!"), backgroundColor: Colors.green),
-                          );
-                        }
-                      },
-                      child: const Text("Select & Add", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                     ),
                   ),
                 ],
               ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: navyBlue),
+                onPressed: () async {
+                  if (tempSelections.isEmpty) {
+                    Navigator.pop(context);
+                    return;
+                  }
+
+                  for (var entry in tempSelections.entries) {
+                    final docRef = await FirebaseFirestore.instance.collection('Inventory').doc(entry.key).get();
+                    if (docRef.exists) {
+                      final data = docRef.data() as Map<String, dynamic>;
+                      _addItemToCart(
+                        id: entry.key,
+                        name: data['itemName'] ?? 'Unknown',
+                        piecePrice: (data['price'] as num?)?.toDouble() ?? 0.0,
+                        pieceCost: (data['cost'] as num?)?.toDouble() ?? 0.0,
+                        stock: (data['stock'] as num?)?.toInt() ?? 0,
+                        quantityToAdd: entry.value['qty'],
+                        piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
+                        isSellingAsPack: entry.value['isPack'],
+                      );
+                    }
+                  }
+
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Selected items added to cart!"), backgroundColor: Colors.green),
+                    );
+                  }
+                },
+                child: const Text("Select & Add", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
             ],
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -535,10 +571,11 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     if (scanResult != null && scanResult is String && mounted) {
       final firestore = FirebaseFirestore.instance;
       
+      // Global inventory lookup across all users for shared barcode auto-fill
       var querySnapshot = await firestore
           .collection('Inventory')
-          .where('userId', isEqualTo: user?.uid)
           .where('barcode', isEqualTo: scanResult)
+          .limit(1)
           .get();
 
       if (querySnapshot.docs.isEmpty) {
@@ -563,29 +600,12 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
           isSellingAsPack: false,
         );
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Added piece: ${data['itemName']}"), backgroundColor: Colors.green),
+          SnackBar(content: Text("Auto-filled & added: ${data['itemName']}"), backgroundColor: Colors.green),
         );
         return;
       }
 
       bool isNumericBarcode = RegExp(r'^\d+$').hasMatch(scanResult);
-      if (isNumericBarcode) {
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const Center(child: CircularProgressIndicator()),
-        );
-
-        final globalProduct = await _fetchProductFromGlobalAPI(scanResult);
-        if (!mounted) return;
-        Navigator.pop(context);
-
-        if (globalProduct != null) {
-          _showFoundOnlineDialog(globalProduct);
-          return;
-        }
-      }
-
       if (isNumericBarcode) {
         _promptForUnknownBarcodeName(scanResult);
       } else {
@@ -595,41 +615,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         });
       }
     }
-  }
-
-  void _showFoundOnlineDialog(Map<String, dynamic> globalProduct) {
-    showDialog(
-      context: context,
-      builder: (context) {
-        final bool isDark = Theme.of(context).brightness == Brightness.dark;
-        return AlertDialog(
-          backgroundColor: isDark ? const Color(0xFF242526) : Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Text(
-            "Product Found Online!",
-            style: TextStyle(color: isDark ? Colors.white : navyBlue, fontWeight: FontWeight.bold),
-          ),
-          content: Text("We found '${globalProduct['itemName']}' online. Would you like to add it to your inventory?"),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: navyBlue,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              onPressed: () {
-                Navigator.pop(context);
-                _verifyAndNavigateToAddItemWithData(globalProduct);
-              },
-              child: const Text("Add to Inventory", style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   void _promptForUnknownBarcodeName(String scannedBarcode) {
@@ -847,6 +832,21 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         'timestamp': FieldValue.serverTimestamp(),
       });
 
+      // --- DAILY METRICS AGGREGATION ---
+      String todayDateKey = DateTime.now().toIso8601String().substring(0, 10);
+      DocumentReference dailyRef = firestore
+          .collection('Users')
+          .doc(user!.uid)
+          .collection('DailyMetrics')
+          .doc(todayDateKey);
+
+      batch.set(dailyRef, {
+        'totalSales': FieldValue.increment(_totalAmount),
+        'totalProfit': FieldValue.increment(totalProfit),
+        'transactionCount': FieldValue.increment(1),
+        'date': todayDateKey,
+      }, SetOptions(merge: true));
+
       await batch.commit();
 
       navigator.pop();
@@ -855,7 +855,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         _totalAmount = 0.0;
       });
 
-      messenger.showSnackBar(const SnackBar(content: Text("Checkout Successful!."), backgroundColor: Colors.green));
+      messenger.showSnackBar(const SnackBar(content: Text("Checkout Successful!"), backgroundColor: Colors.green));
     } catch (e) {
       if (navigator.canPop()) navigator.pop();
       messenger.showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));

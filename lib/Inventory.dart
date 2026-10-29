@@ -27,13 +27,15 @@ class _InventoryScreenState extends State<InventoryScreen> {
   final Color navyBlue = const Color(0xFF1E3A5F);
   final Color tealAccent = const Color(0xFF4FD1C5);
 
-  final List<String> _categories = [
-    'All Categories',
-    'Food Products & Staples',
+  // Default baseline sari-sari store categories
+  final List<String> _defaultCategories = [
+    'Canned Goods & Staples',
     'Snacks & Treats',
-    'Beverages',
+    'Beverages & Drinks',
+    'Condiments & Sauces',
     'Personal Care & Hygiene',
     'Household & Cleaning Supplies',
+    'Cigarettes & Tobacco',
   ];
 
   Stream<QuerySnapshot> _getInventoryStream() {
@@ -46,7 +48,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
         .snapshots();
   }
 
-  /// Calculates dynamic status based on sales velocity (how fast items are sold)
+  /// Calculates dynamic status based on sales velocity
   String _calculateDynamicStatus(Map<String, dynamic> data) {
     int currentStock = (data['stock'] as num?)?.toInt() ?? 0;
     if (currentStock <= 0) return 'Critical';
@@ -54,7 +56,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
     int totalSold = (data['totalSold'] as num?)?.toInt() ?? 0;
     Timestamp? createdAt = data['createdAt'] as Timestamp?;
 
-    // If newly added or never sold, rely strictly on physical stock rules instead of velocity
     if (totalSold == 0 || createdAt == null) {
       if (currentStock <= 5) return 'Critical';
       if (currentStock <= 10) return 'Low Stock';
@@ -68,7 +69,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
     double salesVelocityPerDay = totalSold / daysActive;
     double estimatedDaysRemaining = currentStock / salesVelocityPerDay;
 
-    // Fast seller velocity check
     if (salesVelocityPerDay >= 3.0 && estimatedDaysRemaining <= 3.0) {
       return 'Critical';
     } else if (salesVelocityPerDay >= 1.5 && estimatedDaysRemaining <= 7.0) {
@@ -280,6 +280,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
         setState(() {
           _selectedDocIds.clear();
+          _selectedCategory = 'All Categories';
         });
         _showSnackBar("Selected items deleted successfully", isError: false);
       }
@@ -484,259 +485,276 @@ class _InventoryScreenState extends State<InventoryScreen> {
             ),
         ],
       ),
-      body: Column(
-        children: [
-          // 1. STATUS TABS
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            color: isDark ? fbCardBg : navyBlue,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: ['All Items', 'In Stock', 'Low Stock', 'Critical'].map((tab) {
-                  bool isSelected = _selectedStatusTab == tab;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: ChoiceChip(
-                      label: Text(tab),
-                      selected: isSelected,
-                      onSelected: (_) => setState(() => _selectedStatusTab = tab),
-                      selectedColor: tealAccent,
-                      backgroundColor: isDark
-                          ? Colors.white.withValues(alpha: 0.05)
-                          : Colors.white.withValues(alpha: 0.1),
-                      labelStyle: TextStyle(
-                        color: isSelected ? Colors.black : (isDark ? fbTextGrey : Colors.black),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-          ),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: _getInventoryStream(),
+        builder: (context, snapshot) {
+          Set<String> activeCategories = {'All Categories', ..._defaultCategories};
+          if (snapshot.hasData) {
+            for (var doc in snapshot.data!.docs) {
+              var data = doc.data() as Map<String, dynamic>;
+              String? cat = data['category'];
+              if (cat != null && cat.isNotEmpty) {
+                activeCategories.add(cat);
+              }
+            }
+          }
 
-          // 2. CATEGORY DROPDOWN
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: isDark ? fbCardBg : Colors.white,
-              boxShadow: isDark ? [] : [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 5)],
-            ),
-            child: DropdownButtonFormField<String>(
-              dropdownColor: isDark ? fbCardBg : Colors.white,
-              value: _selectedCategory,
-              style: TextStyle(color: isDark ? Colors.white : Colors.black),
-              decoration: InputDecoration(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                labelText: "Filter by Category",
-                labelStyle: TextStyle(color: isDark ? tealAccent : navyBlue, fontSize: 14),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade300),
-                ),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              items: _categories.map((String category) {
-                return DropdownMenuItem<String>(
-                  value: category,
-                  child: Text(category, style: const TextStyle(fontSize: 14)),
-                );
-              }).toList(),
-              onChanged: (newValue) {
-                if (newValue != null) {
-                  setState(() => _selectedCategory = newValue);
-                }
-              },
-            ),
-          ),
+          if (!activeCategories.contains(_selectedCategory)) {
+            _selectedCategory = 'All Categories';
+          }
 
-          // 3. INVENTORY LIST
-          Expanded(
-            child: Container(
-              color: isDark ? fbDarkBg : const Color(0xFFF0FAFC),
-              child: StreamBuilder<QuerySnapshot>(
-                stream: _getInventoryStream(),
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    return Center(child: Text("Error fetching data: ${snapshot.error}", style: const TextStyle(color: Colors.redAccent)));
-                  }
-
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-
-                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                    return Center(child: Text("No items found", style: TextStyle(color: isDark ? fbTextGrey : Colors.grey)));
-                  }
-
-                  final docs = snapshot.data!.docs.where((doc) {
-                    final data = doc.data() as Map<String, dynamic>;
-                   
-                    if (_selectedCategory != 'All Categories') {
-                      if ((data['category'] ?? '') != _selectedCategory) {
-                        return false;
-                      }
-                    }
-
-                    if (_selectedStatusTab != 'All Items') {
-                      String calculatedStatus = _calculateDynamicStatus(data);
-                      if (calculatedStatus != _selectedStatusTab) {
-                        return false;
-                      }
-                    }
-
-                    return true;
-                  }).toList();
-
-                  if (docs.isEmpty) {
-                    return Center(child: Text("No items match selected filters", style: TextStyle(color: isDark ? fbTextGrey : Colors.grey)));
-                  }
-
-                  return ListView.builder(
-                    padding: const EdgeInsets.all(15),
-                    itemCount: docs.length,
-                    itemBuilder: (context, index) {
-                      var doc = docs[index];
-                      var data = doc.data() as Map<String, dynamic>;
-                      bool isSelected = _selectedDocIds.contains(doc.id);
-
-                      double price = (data['price'] as num?)?.toDouble() ?? 0.0;
-                      double cost = (data['cost'] as num?)?.toDouble() ?? 0.0;
-                      double margin = price - cost;
-                      int currentStock = (data['stock'] as num?)?.toInt() ?? 0;
-                      bool isOutOfStock = currentStock <= 0;
-                      String? imagePath = data['imagePath'] ?? data['imageUrl'];
-
-                      String effectiveStatus = _calculateDynamicStatus(data);
-                      Widget statusIcon = _buildStatusIcon(effectiveStatus);
-
-                      return GestureDetector(
-                        onLongPress: () {
-                          setState(() {
-                            if (isSelected) {
-                              _selectedDocIds.remove(doc.id);
-                            } else {
-                              _selectedDocIds.add(doc.id);
-                            }
-                          });
-                        },
-                        child: Card(
-                          color: isSelected 
-                              ? (isDark ? Colors.teal.shade900.withValues(alpha: 0.4) : Colors.teal.shade50)
-                              : (isDark ? fbCardBg : Colors.white),
-                          margin: const EdgeInsets.only(bottom: 15),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(15),
-                            side: isSelected
-                                ? BorderSide(color: tealAccent, width: 2)
-                                : (effectiveStatus == 'Critical' ? const BorderSide(color: Colors.redAccent, width: 1.5) : BorderSide.none),
-                          ),
-                          child: Column(
-                            children: [
-                              Opacity(
-                                opacity: isOutOfStock ? 0.4 : 1.0,
-                                child: ListTile(
-                                  leading: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (_isMultiSelecting)
-                                        Checkbox(
-                                          value: isSelected,
-                                          activeColor: tealAccent,
-                                          onChanged: (bool? value) {
-                                            setState(() {
-                                              if (value == true) {
-                                                _selectedDocIds.add(doc.id);
-                                              } else {
-                                                _selectedDocIds.remove(doc.id);
-                                              }
-                                            });
-                                          },
-                                        ),
-                                      _buildProductThumbnail(imagePath, statusIcon),
-                                    ],
-                                  ),
-                                  title: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          data['itemName'] ?? 'Product',
-                                          style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black),
-                                        ),
-                                      ),
-                                      if (effectiveStatus == 'Critical' && !isOutOfStock)
-                                        const Text("FAST SELLER (CRITICAL)", style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold)),
-                                    ],
-                                  ),
-                                  subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text("Stock: $currentStock | ${data['category'] ?? 'General'}", style: TextStyle(color: isDark ? fbTextGrey : Colors.black54)),
-                                      Text("Barcode: ${data['barcode'] ?? 'N/A'}", style: TextStyle(color: isDark ? tealAccent : navyBlue, fontSize: 11, fontWeight: FontWeight.w500)),
-                                      Text("Capital/Unit: ₱${cost.toStringAsFixed(2)}", style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
-                                    ],
-                                  ),
-                                  trailing: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Text("₱${price.toStringAsFixed(2)}", style: TextStyle(color: isDark ? tealAccent : navyBlue, fontWeight: FontWeight.bold, fontSize: 16)),
-                                      Text(
-                                        "Profit: ${margin >= 0 ? '+' : ''}₱${margin.toStringAsFixed(2)}",
-                                        style: TextStyle(
-                                          color: margin >= 0 ? Colors.green : Colors.redAccent,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-
-                              Padding(
-                                padding: const EdgeInsets.only(right: 12, bottom: 12, left: 12),
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(8),
-                                        boxShadow: effectiveStatus == 'Critical' ? [
-                                          BoxShadow(
-                                            color: Colors.redAccent.withValues(alpha: 0.7),
-                                            blurRadius: 12,
-                                            spreadRadius: 1,
-                                          ),
-                                        ] : [],
-                                      ),
-                                      child: ElevatedButton.icon(
-                                        onPressed: () => _verifyAndRestock(data, doc.id),
-                                        icon: const Icon(Icons.add_business, size: 16, color: Colors.white),
-                                        label: const Text("RESTOCK", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: effectiveStatus == 'Critical' ? Colors.redAccent : tealAccent,
-                                          elevation: effectiveStatus == 'Critical' ? 0 : 2,
-                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
+          return Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                color: isDark ? fbCardBg : navyBlue,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: ['All Items', 'In Stock', 'Low Stock', 'Critical'].map((tab) {
+                      bool isSelected = _selectedStatusTab == tab;
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: ChoiceChip(
+                          label: Text(tab),
+                          selected: isSelected,
+                          onSelected: (_) => setState(() => _selectedStatusTab = tab),
+                          selectedColor: tealAccent,
+                          backgroundColor: isDark
+                              ? Colors.white.withValues(alpha: 0.05)
+                              : Colors.white.withValues(alpha: 0.1),
+                          labelStyle: TextStyle(
+                            color: isSelected ? Colors.black : (isDark ? fbTextGrey : Colors.black),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
                           ),
                         ),
                       );
-                    },
-                  );
-                },
+                    }).toList(),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ],
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: isDark ? fbCardBg : Colors.white,
+                  boxShadow: isDark ? [] : [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 5)],
+                ),
+                child: DropdownButtonFormField<String>(
+                  dropdownColor: isDark ? fbCardBg : Colors.white,
+                  value: _selectedCategory,
+                  style: TextStyle(color: isDark ? Colors.white : Colors.black),
+                  decoration: InputDecoration(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    labelText: "Filter by Category",
+                    labelStyle: TextStyle(color: isDark ? tealAccent : navyBlue, fontSize: 14),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: isDark ? Colors.white10 : Colors.grey.shade300),
+                    ),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  items: activeCategories.map((String category) {
+                    return DropdownMenuItem<String>(
+                      value: category,
+                      child: Text(category, style: const TextStyle(fontSize: 14)),
+                    );
+                  }).toList(),
+                  onChanged: (newValue) {
+                    if (newValue != null) {
+                      setState(() => _selectedCategory = newValue);
+                    }
+                  },
+                ),
+              ),
+              Expanded(
+                child: Container(
+                  color: isDark ? fbDarkBg : const Color(0xFFF0FAFC),
+                  child: () {
+                    if (snapshot.hasError) {
+                      return Center(child: Text("Error fetching data: ${snapshot.error}", style: const TextStyle(color: Colors.redAccent)));
+                    }
+
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                      return Center(child: Text("No items found", style: TextStyle(color: isDark ? fbTextGrey : Colors.grey)));
+                    }
+
+                    final docs = snapshot.data!.docs.where((doc) {
+                      final data = doc.data() as Map<String, dynamic>;
+                     
+                      if (_selectedCategory != 'All Categories') {
+                        if ((data['category'] ?? '') != _selectedCategory) {
+                          return false;
+                        }
+                      }
+
+                      if (_selectedStatusTab != 'All Items') {
+                        String calculatedStatus = _calculateDynamicStatus(data);
+                        if (calculatedStatus != _selectedStatusTab) {
+                          return false;
+                        }
+                      }
+
+                      return true;
+                    }).toList();
+
+                    if (docs.isEmpty) {
+                      return Center(child: Text("No items match selected filters", style: TextStyle(color: isDark ? fbTextGrey : Colors.grey)));
+                    }
+
+                    return ListView.builder(
+                      padding: const EdgeInsets.all(15),
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        var doc = docs[index];
+                        var data = doc.data() as Map<String, dynamic>;
+                        bool isSelected = _selectedDocIds.contains(doc.id);
+
+                        double price = (data['price'] as num?)?.toDouble() ?? 0.0;
+                        double cost = (data['cost'] as num?)?.toDouble() ?? 0.0;
+                        double margin = price - cost;
+                        int currentStock = (data['stock'] as num?)?.toInt() ?? 0;
+                        bool isOutOfStock = currentStock <= 0;
+                        String? imagePath = data['imagePath'] ?? data['imageUrl'];
+
+                        String effectiveStatus = _calculateDynamicStatus(data);
+                        Widget statusIcon = _buildStatusIcon(effectiveStatus);
+
+                        return GestureDetector(
+                          onLongPress: () {
+                            setState(() {
+                              if (isSelected) {
+                                _selectedDocIds.remove(doc.id);
+                              } else {
+                                _selectedDocIds.add(doc.id);
+                              }
+                            });
+                          },
+                          child: Card(
+                            color: isSelected 
+                                ? (isDark ? Colors.teal.shade900.withValues(alpha: 0.4) : Colors.teal.shade50)
+                                : (isDark ? fbCardBg : Colors.white),
+                            margin: const EdgeInsets.only(bottom: 15),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(15),
+                              side: isSelected
+                                  ? BorderSide(color: tealAccent, width: 2)
+                                  : (effectiveStatus == 'Critical' ? const BorderSide(color: Colors.redAccent, width: 1.5) : BorderSide.none),
+                            ),
+                            child: Column(
+                              children: [
+                                Opacity(
+                                  opacity: isOutOfStock ? 0.4 : 1.0,
+                                  child: ListTile(
+                                    leading: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (_isMultiSelecting)
+                                          Checkbox(
+                                            value: isSelected,
+                                            activeColor: tealAccent,
+                                            onChanged: (bool? value) {
+                                              setState(() {
+                                                if (value == true) {
+                                                  _selectedDocIds.add(doc.id);
+                                                } else {
+                                                  _selectedDocIds.remove(doc.id);
+                                                }
+                                              });
+                                            },
+                                          ),
+                                        _buildProductThumbnail(imagePath, statusIcon),
+                                      ],
+                                    ),
+                                    title: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            data['itemName'] ?? 'Product',
+                                            style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black),
+                                          ),
+                                        ),
+                                        if (effectiveStatus == 'Critical' && !isOutOfStock)
+                                          const Text("FAST SELLER (CRITICAL)", style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold)),
+                                      ],
+                                    ),
+                                    subtitle: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text("Stock: $currentStock | ${data['category'] ?? 'General'}", style: TextStyle(color: isDark ? fbTextGrey : Colors.black54)),
+                                        Text("Barcode: ${data['barcode'] ?? 'N/A'}", style: TextStyle(color: isDark ? tealAccent : navyBlue, fontSize: 11, fontWeight: FontWeight.w500)),
+                                        Text(
+                                          "Capital/Unit: ₱${cost.toStringAsFixed(2)}", 
+                                          style: TextStyle(
+                                            color: isDark ? fbTextGrey : Colors.black87, // Standard color, no longer forces red
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    trailing: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: [
+                                        Text("₱${price.toStringAsFixed(2)}", style: TextStyle(color: isDark ? tealAccent : navyBlue, fontWeight: FontWeight.bold, fontSize: 16)),
+                                        Text(
+                                          "Profit: ${margin >= 0 ? '+' : ''}₱${margin.toStringAsFixed(2)}",
+                                          style: TextStyle(
+                                            color: margin >= 0 ? Colors.green : Colors.redAccent,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                Padding(
+                                  padding: const EdgeInsets.only(right: 12, bottom: 12, left: 12),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(8),
+                                          boxShadow: effectiveStatus == 'Critical' ? [
+                                            BoxShadow(
+                                              color: Colors.redAccent.withValues(alpha: 0.7),
+                                              blurRadius: 12,
+                                              spreadRadius: 1,
+                                            ),
+                                          ] : [],
+                                        ),
+                                        child: ElevatedButton.icon(
+                                          onPressed: () => _verifyAndRestock(data, doc.id),
+                                          icon: const Icon(Icons.add_business, size: 16, color: Colors.white),
+                                          label: const Text("RESTOCK", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: effectiveStatus == 'Critical' ? Colors.redAccent : tealAccent,
+                                            elevation: effectiveStatus == 'Critical' ? 0 : 2,
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  }(),
+                ),
+              ),
+            ],
+          );
+        },
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _verifyAndAddNew,

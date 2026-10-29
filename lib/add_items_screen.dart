@@ -24,8 +24,21 @@ class _AddItemScreenState extends State<AddItemScreen> {
   final TextEditingController _unitCostController = TextEditingController(); 
   final TextEditingController _piecesPerPackController = TextEditingController(text: '20'); 
   final TextEditingController _sellingPriceController = TextEditingController();
+  final TextEditingController _customCategoryController = TextEditingController();
 
-  String _selectedCategory = 'Food Products & Staples';
+  // Authentic Filipino Sari-Sari Store Categories including "Others"
+  final List<String> _categories = [
+    'Canned Goods & Staples',
+    'Snacks & Treats',
+    'Beverages & Drinks',
+    'Condiments & Sauces',
+    'Personal Care & Hygiene',
+    'Household & Cleaning Supplies',
+    'Cigarettes & Tobacco',
+    'Others',
+  ];
+
+  String _selectedCategory = 'Canned Goods & Staples';
   bool _isTingiMode = true; 
   String? _imagePath;
   bool _isLoading = false;
@@ -34,13 +47,27 @@ class _AddItemScreenState extends State<AddItemScreen> {
   final Color tealAccent = const Color(0xFF4FD1C5);
   final Color fbCardBg = const Color(0xFF242526);
 
-  final List<String> _categories = [
-    'Food Products & Staples',
-    'Snacks & Treats',
-    'Beverages',
-    'Personal Care & Hygiene',
-    'Household & Cleaning Supplies',
-  ];
+  // Helper to give smart product examples based on selected category
+  String _getCategoryHint() {
+    switch (_selectedCategory) {
+      case 'Canned Goods & Staples':
+        return "e.g., Lucky Me Pancit Canton, Argentina Corned Beef";
+      case 'Snacks & Treats':
+        return "e.g., Piattos Cheese, Nova, Chippy, Cloud 9";
+      case 'Beverages & Drinks':
+        return "e.g., Coca-Cola 8oz, Cobra Energy Drink, Wilkins Water";
+      case 'Condiments & Sauces':
+        return "e.g., Datu Puti Soy Sauce, Silver Swan Vinegar";
+      case 'Personal Care & Hygiene':
+        return "e.g., Rejoice Shampoo Sachet, Safeguard Soap";
+      case 'Household & Cleaning Supplies':
+        return "e.g., Surf Powder, Joy Dishwashing Liquid";
+      case 'Cigarettes & Tobacco':
+        return "e.g., Marlboro Red (Per Stick), Mighty Green";
+      default:
+        return "e.g., Custom Product Name";
+    }
+  }
 
   @override
   void initState() {
@@ -63,13 +90,24 @@ class _AddItemScreenState extends State<AddItemScreen> {
 
       _piecesPerPackController.text = pieces.toString();
       _sellingPriceController.text = (data['price'] ?? '').toString();
-      _selectedCategory = data['category'] ?? 'Food Products & Staples';
+      
+      String loadedCategory = data['category'] ?? 'Canned Goods & Staples';
+      if (_categories.contains(loadedCategory)) {
+        _selectedCategory = loadedCategory;
+      } else {
+        _selectedCategory = 'Others';
+        _customCategoryController.text = loadedCategory;
+      }
+
       _imagePath = data['imagePath'] ?? data['imageUrl'];
 
       if (_isTingiMode) {
-        _packCostController.text = (data['totalPackCost'] ?? (data['cost'] * pieces)).toString();
+        // Fallback calculation if totalPackCost wasn't stored explicitly
+        double packCostVal = data['totalPackCost'] ?? ((data['cost'] ?? 0.0) * pieces);
+        _packCostController.text = packCostVal > 0 ? packCostVal.toString() : '';
       } else {
-        _unitCostController.text = (data['cost'] ?? '').toString();
+        double unitCostVal = data['cost'] ?? 0.0;
+        _unitCostController.text = unitCostVal > 0 ? unitCostVal.toString() : '';
       }
     }
   }
@@ -83,7 +121,56 @@ class _AddItemScreenState extends State<AddItemScreen> {
     _unitCostController.dispose();
     _piecesPerPackController.dispose();
     _sellingPriceController.dispose();
+    _customCategoryController.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleCategorySelection(String? category) async {
+    if (category == 'Others') {
+      String? customVal = await showDialog<String>(
+        context: context,
+        builder: (context) {
+          final bool isDark = Theme.of(context).brightness == Brightness.dark;
+          return AlertDialog(
+            backgroundColor: isDark ? fbCardBg : Colors.white,
+            title: Text("Custom Category", style: TextStyle(color: isDark ? Colors.white : navyBlue, fontWeight: FontWeight.bold)),
+            content: TextField(
+              controller: _customCategoryController,
+              autofocus: true,
+              style: TextStyle(color: isDark ? Colors.white : Colors.black),
+              decoration: InputDecoration(
+                hintText: "e.g., Hardware, Pets",
+                hintStyle: const TextStyle(color: Colors.grey),
+                enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: tealAccent)),
+                focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: tealAccent, width: 2)),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel", style: TextStyle(color: Colors.grey)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: tealAccent),
+                onPressed: () => Navigator.pop(context, _customCategoryController.text.trim()),
+                child: const Text("Save", style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (customVal != null && customVal.isNotEmpty) {
+        setState(() {
+          _selectedCategory = customVal;
+        });
+      }
+    } else if (category != null) {
+      setState(() {
+        _selectedCategory = category;
+        _customCategoryController.clear();
+      });
+    }
   }
 
   Future<void> _scanAndAutoFill() async {
@@ -109,7 +196,13 @@ class _AddItemScreenState extends State<AddItemScreen> {
           final existingData = query.docs.first.data();
           setState(() {
             _itemNameController.text = existingData['itemName'] ?? '';
-            _selectedCategory = existingData['category'] ?? _selectedCategory;
+            String matchedCat = existingData['category'] ?? _selectedCategory;
+            if (_categories.contains(matchedCat)) {
+              _selectedCategory = matchedCat;
+            } else {
+              _selectedCategory = 'Others';
+              _customCategoryController.text = matchedCat;
+            }
             _sellingPriceController.text = (existingData['price'] ?? '').toString();
             
             int pieces = (existingData['piecesPerPack'] ?? 1).toInt();
@@ -150,6 +243,10 @@ class _AddItemScreenState extends State<AddItemScreen> {
       final itemName = _itemNameController.text.trim();
       final normalizedInputName = normalize(itemName);
       final barcode = _barcodeController.text.trim();
+      
+      final finalCategory = (_selectedCategory == 'Others' && _customCategoryController.text.isNotEmpty)
+          ? _customCategoryController.text.trim()
+          : _selectedCategory;
 
       if (widget.documentId == null) {
         QuerySnapshot duplicateCheckQuery = await FirebaseFirestore.instance
@@ -241,11 +338,11 @@ class _AddItemScreenState extends State<AddItemScreen> {
         'itemName': itemName,
         'barcode': barcode,
         'stock': totalPiecesStock, 
-        'cost': unitCost, 
+        'cost': unitCost, // Saved properly as a double
         'totalPackCost': totalPackCostStored, 
         'piecesPerPack': piecesPerPack,
         'price': sellingPrice, 
-        'category': _selectedCategory,
+        'category': finalCategory,
         'status': status,
         'imagePath': _imagePath ?? '',
         'updatedAt': FieldValue.serverTimestamp(),
@@ -284,6 +381,8 @@ class _AddItemScreenState extends State<AddItemScreen> {
     int inputStockVal = int.tryParse(_stockController.text) ?? 0;
     int computedTotalPieces = _isTingiMode ? (inputStockVal * previewPieces) : inputStockVal;
 
+    String dropdownValue = _categories.contains(_selectedCategory) ? _selectedCategory : 'Others';
+
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF18191A) : navyBlue,
       appBar: AppBar(
@@ -294,14 +393,6 @@ class _AddItemScreenState extends State<AddItemScreen> {
         backgroundColor: navyBlue,
         iconTheme: const IconThemeData(color: Colors.white),
         elevation: 0,
-        actions: [
-          if (widget.documentId == null)
-            IconButton(
-              icon: const Icon(Icons.camera_alt, color: Colors.white),
-              tooltip: "Scan Barcode / AI Vision",
-              onPressed: _scanAndAutoFill,
-            ),
-        ],
       ),
       body: Container(
         decoration: BoxDecoration(
@@ -329,16 +420,6 @@ class _AddItemScreenState extends State<AddItemScreen> {
                   const SizedBox(height: 20),
                 ],
 
-                // --- ITEM NAME ---
-                const Text("Item Name", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _itemNameController,
-                  decoration: _inputDecoration("e.g., Marlboro Red (Per Stick)"),
-                  validator: (val) => val == null || val.isEmpty ? "Please enter item name" : null,
-                ),
-                const SizedBox(height: 16),
-
                 // --- BARCODE / SKU ---
                 const Text("Barcode / SKU", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                 const SizedBox(height: 8),
@@ -348,14 +429,31 @@ class _AddItemScreenState extends State<AddItemScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // --- CATEGORY ---
+                // --- CATEGORY DROPDOWN ---
                 const Text("Category", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
-                  value: _selectedCategory,
+                  value: dropdownValue,
                   decoration: _inputDecoration(""),
-                  items: _categories.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
-                  onChanged: (val) => setState(() => _selectedCategory = val!),
+                  items: _categories.map((cat) {
+                    return DropdownMenuItem(
+                      value: cat, 
+                      child: Text(cat == 'Others' && !_categories.contains(_selectedCategory) 
+                          ? "Others ($_selectedCategory)" 
+                          : cat),
+                    );
+                  }).toList(),
+                  onChanged: (val) => _handleCategorySelection(val),
+                ),
+                const SizedBox(height: 16),
+
+                // --- ITEM NAME ---
+                const Text("Item Name", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _itemNameController,
+                  decoration: _inputDecoration(_getCategoryHint()),
+                  validator: (val) => val == null || val.isEmpty ? "Please enter item name" : null,
                 ),
                 const SizedBox(height: 16),
 
@@ -419,7 +517,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                               inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
                               onChanged: (_) => setState(() {}),
                               decoration: _inputDecoration("e.g., 180"),
-                              validator: (val) => _isTingiMode && (val == null || val.isEmpty) ? "Required" : null,
+                              validator: (val) => _isTingiMode && (val == null || val.isEmpty || double.parse(val) <= 0) ? "Required (> 0)" : null,
                             ),
                           ],
                         ),
@@ -463,7 +561,7 @@ class _AddItemScreenState extends State<AddItemScreen> {
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
                     decoration: _inputDecoration("e.g., 9.00"),
-                    validator: (val) => !_isTingiMode && (val == null || val.isEmpty) ? "Required" : null,
+                    validator: (val) => !_isTingiMode && (val == null || val.isEmpty || double.parse(val) <= 0) ? "Required (> 0)" : null,
                   ),
                   const SizedBox(height: 16),
                 ],

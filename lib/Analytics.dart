@@ -615,11 +615,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  // OPTIMIZED BAR CHART FOR A PROFESSIONAL LOOK
+  // --- REFACTORED TREND CHART WIDGET: BAR CHART FOR REVENUE ---
   Widget _buildBarChart(Map<String, double> data, bool isDark) {
     List<String> days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    double maxY = data.values.isEmpty ? 100 : (data.values.reduce((a, b) => a > b ? a : b));
+    if (maxY == 0) maxY = 100;
+
     return Container(
-      height: 240,
+      height: 260,
       padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
@@ -629,21 +632,25 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       child: BarChart(
         BarChartData(
           alignment: BarChartAlignment.spaceAround,
+          maxY: maxY * 1.2,
           titlesData: FlTitlesData(
             show: true,
             bottomTitles: AxisTitles(
               sideTitles: SideTitles(
                 showTitles: true,
-                getTitlesWidget: (value, meta) => Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Text(days[value.toInt() % 7], style: const TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.w600)),
-                ),
+                getTitlesWidget: (value, meta) {
+                  int index = value.toInt() % 7;
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(days[index], style: const TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.w600)),
+                  );
+                },
               ),
             ),
             leftTitles: AxisTitles(
               sideTitles: SideTitles(
                 showTitles: true,
-                reservedSize: 36,
+                reservedSize: 40,
                 getTitlesWidget: (value, meta) => Text(
                   value >= 1000 ? '${(value / 1000).toStringAsFixed(1)}k' : value.toInt().toString(),
                   style: const TextStyle(color: Colors.grey, fontSize: 10),
@@ -659,32 +666,37 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             getDrawingHorizontalLine: (value) => FlLine(color: isDark ? Colors.white10 : Colors.grey.shade200, strokeWidth: 1),
           ),
           borderData: FlBorderData(show: false),
-          barGroups: List.generate(7, (i) => BarChartGroupData(
-            x: i, 
-            barRods: [
-              BarChartRodData(
-                toY: data[days[i]]!, 
-                color: navyBlue, 
-                width: 14, 
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
-                backDrawRodData: BackgroundBarChartRodData(
-                  show: true,
-                  toY: (data.values.isEmpty ? 100 : (data.values.reduce((a, b) => a > b ? a : b) * 1.2)),
-                  color: isDark ? Colors.white.withValues(alpha: 0.02) : Colors.grey.withValues(alpha: 0.05),
-                ),
-              )
-            ],
-          )),
+          barGroups: List.generate(7, (i) {
+            String dayKey = days[i];
+            double val = data[dayKey] ?? 0.0;
+            return BarChartGroupData(
+              x: i,
+              barRods: [
+                BarChartRodData(
+                  toY: val,
+                  color: navyBlue,
+                  width: 14,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+                  backDrawRodData: BackgroundBarChartRodData(
+                    show: true,
+                    toY: maxY * 1.2,
+                    color: isDark ? Colors.white.withValues(alpha: 0.02) : Colors.grey.withValues(alpha: 0.05),
+                  ),
+                )
+              ],
+            );
+          }),
         ),
       ),
     );
   }
 
-  // OPTIMIZED LINE CHART FOR A PROFESSIONAL LOOK
+  // --- REFACTORED TREND CHART WIDGET: LINE CHART FOR PROFIT ---
   Widget _buildProfitLineChart(Map<String, double> data, bool isDark) {
     List<String> days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    
     return Container(
-      height: 240,
+      height: 260,
       padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
@@ -694,24 +706,27 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       child: LineChart(
         LineChartData(
           gridData: FlGridData(
-            show: true, 
+            show: true,
             drawVerticalLine: false,
             getDrawingHorizontalLine: (value) => FlLine(color: isDark ? Colors.white10 : Colors.grey.shade200, strokeWidth: 1),
           ),
           titlesData: FlTitlesData(
             bottomTitles: AxisTitles(
               sideTitles: SideTitles(
-                showTitles: true, 
-                getTitlesWidget: (value, meta) => Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Text(days[value.toInt() % 7], style: const TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.w600)),
-                ),
+                showTitles: true,
+                getTitlesWidget: (value, meta) {
+                  int index = value.toInt() % 7;
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(days[index], style: const TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.w600)),
+                  );
+                },
               ),
             ),
             leftTitles: AxisTitles(
               sideTitles: SideTitles(
-                showTitles: true, 
-                reservedSize: 36, 
+                showTitles: true,
+                reservedSize: 40,
                 getTitlesWidget: (value, meta) => Text(
                   value >= 1000 ? '${(value / 1000).toStringAsFixed(1)}k' : value.toInt().toString(),
                   style: const TextStyle(color: Colors.grey, fontSize: 10),
@@ -724,21 +739,32 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           borderData: FlBorderData(show: false),
           lineBarsData: [
             LineChartBarData(
-              spots: List.generate(7, (i) => FlSpot(i.toDouble(), data[days[i]]!)),
+              spots: List.generate(7, (i) {
+                String dayKey = days[i];
+                return FlSpot(i.toDouble(), data[dayKey] ?? 0.0);
+              }),
               color: mintGreen,
               isCurved: true,
               curveSmoothness: 0.35,
               barWidth: 3.5,
               isStrokeCapRound: true,
-              dotData: const FlDotData(show: true),
+              dotData: FlDotData(
+                show: true,
+                getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(
+                  radius: 4,
+                  color: navyBlue,
+                  strokeWidth: 2,
+                  strokeColor: mintGreen,
+                ),
+              ),
               belowBarData: BarAreaData(
-                show: true, 
+                show: true,
                 gradient: LinearGradient(
                   colors: [
-                    mintGreen.withValues(alpha: 0.3), 
+                    mintGreen.withValues(alpha: 0.3),
                     mintGreen.withValues(alpha: 0.0),
-                  ], 
-                  begin: Alignment.topCenter, 
+                  ],
+                  begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                 ),
               ),

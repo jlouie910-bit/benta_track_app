@@ -10,9 +10,41 @@ class ListahanScreen extends StatefulWidget {
   State<ListahanScreen> createState() => _ListahanScreenState();
 }
 
+enum TransactionFilterMode { all, last7Days, thisMonth, customDate }
+
 class _ListahanScreenState extends State<ListahanScreen> {
-  // Filter state: null means "All Transactions", otherwise filters by chosen date
-  DateTime? _selectedDate;
+  TransactionFilterMode _filterMode = TransactionFilterMode.all;
+  DateTime? _selectedCustomDate;
+
+  String _getFilterLabel() {
+    switch (_filterMode) {
+      case TransactionFilterMode.last7Days:
+        return "Last 7 Days";
+      case TransactionFilterMode.thisMonth:
+        return "This Month";
+      case TransactionFilterMode.customDate:
+        return _selectedCustomDate != null
+            ? DateFormat('MMM dd, yyyy').format(_selectedCustomDate!)
+            : "Custom Date";
+      case TransactionFilterMode.all:
+        return "All Transactions";
+    } 
+  }
+
+  Future<void> _selectCustomDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedCustomDate ?? DateTime.now(),
+      firstDate: DateTime(2023),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() {
+        _selectedCustomDate = picked;
+        _filterMode = TransactionFilterMode.customDate;
+      });
+    }
+  }
 
   void _showTransactionDetails(BuildContext context, Map<String, dynamic> data, String dateStr, bool isDark, Color navyBlue) {
     List<dynamic> items = data['items'] ?? [];
@@ -117,20 +149,6 @@ class _ListahanScreenState extends State<ListahanScreen> {
     );
   }
 
-  Future<void> _selectDate(BuildContext context) async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate ?? DateTime.now(),
-      firstDate: DateTime(2023),
-      lastDate: DateTime.now(),
-    );
-    if (picked != null) {
-      setState(() {
-        _selectedDate = picked;
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final User? user = FirebaseAuth.instance.currentUser;
@@ -146,17 +164,19 @@ class _ListahanScreenState extends State<ListahanScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         actions: [
-          if (_selectedDate != null)
+          if (_filterMode != TransactionFilterMode.all)
             IconButton(
               icon: const Icon(Icons.clear, color: Colors.white),
-              tooltip: "Clear Filter",
-              onPressed: () => setState(() => _selectedDate = null),
+              tooltip: "Reset Filter",
+              onPressed: () => setState(() {
+                _filterMode = TransactionFilterMode.all;
+                _selectedCustomDate = null;
+              }),
             ),
         ],
       ),
       body: Column(
         children: [
-          // Date Filter Bar Header
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             color: isDark ? const Color(0xFF242526) : Colors.white,
@@ -168,64 +188,112 @@ class _ListahanScreenState extends State<ListahanScreen> {
                     Icon(Icons.calendar_today, size: 18, color: isDark ? tealAccent : navyBlue),
                     const SizedBox(width: 8),
                     Text(
-                      _selectedDate == null 
-                          ? "Showing: All Transactions" 
-                          : "Date: ${DateFormat('MMM dd, yyyy').format(_selectedDate!)}",
+                      "Showing: ${_getFilterLabel()}",
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
-                        fontSize: 14,
+                        fontSize: 13,
                         color: isDark ? Colors.white : Colors.black87,
                       ),
                     ),
                   ],
                 ),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: navyBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                PopupMenuButton<TransactionFilterMode>(
+                  onSelected: (mode) {
+                    if (mode == TransactionFilterMode.customDate) {
+                      _selectCustomDate(context);
+                    } else {
+                      setState(() {
+                        _filterMode = mode;
+                      });
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: TransactionFilterMode.all,
+                      child: Text("All Transactions (Recent 50)"),
+                    ),
+                    const PopupMenuItem(
+                      value: TransactionFilterMode.last7Days,
+                      child: Text("Last 7 Days"),
+                    ),
+                    const PopupMenuItem(
+                      value: TransactionFilterMode.thisMonth,
+                      child: Text("This Month"),
+                    ),
+                    const PopupMenuItem(
+                      value: TransactionFilterMode.customDate,
+                      child: Text("Pick Specific Date..."),
+                    ),
+                  ],
+                  child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: navyBlue,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        const Icon(Icons.filter_list, size: 16, color: Colors.white),
+                        const SizedBox(width: 4),
+                        const Text("Filter", style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
                   ),
-                  onPressed: () => _selectDate(context),
-                  icon: const Icon(Icons.filter_list, size: 16),
-                  label: const Text("Pick Date", style: TextStyle(fontSize: 12)),
                 ),
               ],
             ),
           ),
           
-          // Transaction List Stream
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('transactions')
-                  .where('userId', isEqualTo: user?.uid)
-                  .orderBy('timestamp', descending: true)
-                  .snapshots(),
+              stream: (() {
+                var query = FirebaseFirestore.instance
+                    .collection('transactions')
+                    .where('userId', isEqualTo: user?.uid)
+                    .orderBy('timestamp', descending: true);
+
+                if (_filterMode == TransactionFilterMode.last7Days) {
+                  DateTime cutoff = DateTime.now().subtract(const Duration(days: 7));
+                  query = query.where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(cutoff));
+                } else if (_filterMode == TransactionFilterMode.thisMonth) {
+                  DateTime startOfMonth = DateTime(DateTime.now().year, DateTime.now().month, 1);
+                  query = query.where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfMonth));
+                } else {
+                  query = query.limit(50);
+                }
+
+                return query.snapshots();
+              })(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
                 }
 
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Center(child: Text("No transactions found", style: TextStyle(color: Colors.grey)));
+                  return const Center(
+                    child: Text("No transactions found", style: TextStyle(color: Colors.grey)),
+                  );
                 }
 
-                // Filter docs locally if a specific date was chosen
                 var docs = snapshot.data!.docs.where((doc) {
-                  if (_selectedDate == null) return true;
+                  if (_filterMode != TransactionFilterMode.customDate || _selectedCustomDate == null) {
+                    return true;
+                  }
                   var data = doc.data() as Map<String, dynamic>;
                   Timestamp? timestamp = data['timestamp'] as Timestamp?;
                   if (timestamp == null) return false;
                   
                   DateTime dt = timestamp.toDate();
-                  return dt.year == _selectedDate!.year &&
-                         dt.month == _selectedDate!.month &&
-                         dt.day == _selectedDate!.day;
+                  return dt.year == _selectedCustomDate!.year &&
+                         dt.month == _selectedCustomDate!.month &&
+                         dt.day == _selectedCustomDate!.day;
                 }).toList();
 
                 if (docs.isEmpty) {
-                  return const Center(child: Text("No transactions found for this date", style: TextStyle(color: Colors.grey)));
+                  return const Center(
+                    child: Text("No transactions found for this date", style: TextStyle(color: Colors.grey)),
+                  );
                 }
 
                 return ListView.builder(
@@ -238,7 +306,6 @@ class _ListahanScreenState extends State<ListahanScreen> {
                     double totalBenta = (data['totalAmount'] ?? 0.0).toDouble();
                     DateTime dt = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
                     
-                    // --- CONVERTED TO 12-HOUR FORMAT WITH AM/PM ---
                     String dateStr = DateFormat('M/d/yyyy | h:mm a').format(dt);
 
                     double transactionProfit = 0;
@@ -264,7 +331,7 @@ class _ListahanScreenState extends State<ListahanScreen> {
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(isDark ? 0.3 : 0.04),
+                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.04),
                             blurRadius: 8,
                             offset: const Offset(0, 3),
                           ),
@@ -284,7 +351,7 @@ class _ListahanScreenState extends State<ListahanScreen> {
                                   width: 46,
                                   height: 46,
                                   decoration: BoxDecoration(
-                                    color: navyBlue.withOpacity(0.1),
+                                    color: navyBlue.withValues(alpha: 0.1),
                                     shape: BoxShape.circle,
                                   ),
                                   child: Icon(Icons.receipt_long, color: navyBlue, size: 22),
