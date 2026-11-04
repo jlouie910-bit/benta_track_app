@@ -7,6 +7,11 @@ workflows:
       flutter: stable
       xcode: latest
     scripts:
+      - name: Configure iOS Deployment Target
+        script: |
+          cd ios
+          echo "platform :ios, '15.0'" > Podfile
+          pod repo update
       - name: Get dependencies
         script: flutter pub get
       - name: Install pods
