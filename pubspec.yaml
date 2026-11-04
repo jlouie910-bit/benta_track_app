@@ -27,10 +27,10 @@ dependencies:
   # AI, ML Kit & Machine Learning
   path_provider: ^2.1.2
   google_generative_ai: ^0.4.0
-  google_mlkit_barcode_scanning: ^0.16.1
+  google_mlkit_barcode_scanning: ^0.15.0
   google_mlkit_object_detection: ^0.16.0
   google_mlkit_image_labeling: ^0.15.0
-  google_mlkit_text_recognition: ^0.16.0
+  google_mlkit_text_recognition: ^0.14.0
   tflite_flutter_custom: ^1.2.5
 
   # Camera & Hardware
