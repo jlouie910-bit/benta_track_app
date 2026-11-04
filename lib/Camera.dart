@@ -2,7 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:camera/camera.dart' as cam;
 
 class CameraScreen extends StatefulWidget {
   const CameraScreen({super.key});
@@ -12,12 +12,19 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver {
-  late final MobileScannerController _scannerController;
+  // Barcode Controller
+  late final MobileScannerController _barcodeController;
+
+  // Native In-App Camera Controller for AI Vision
+  cam.CameraController? _aiCameraController;
+  List<cam.CameraDescription>? _cameras;
+
   GenerativeModel? _visionModel;
 
   bool _isAiMode = true; // Default mode is AI Name Scanning
   bool _hasDetected = false;
   bool _isProcessingAi = false;
+  bool _isCameraInitialized = false;
 
   final Color navyBlue = const Color(0xFF1E3A5F);
   final Color tealAccent = const Color(0xFF4FD1C5);
@@ -29,32 +36,66 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
 
     // Initialize Google Generative AI (Gemini) Model
     _visionModel = GenerativeModel(
-      model: 'gemini-2.5-flash',
-      apiKey: 'AIzaSyAiyWvCp3DEzhX_E2yA_L37f2-jbTQDB9A', // Replace with your actual Gemini API key
+      model: 'gemini-1.5-flash',
+      apiKey: 'AIzaSyAiyWvCp3DEzhX_E2yA_L37f2-jbTQDB9A', // Replace with your actual Gemini API key if needed
     );
 
-    _scannerController = MobileScannerController(
+    _barcodeController = MobileScannerController(
       detectionSpeed: DetectionSpeed.unrestricted,
       facing: CameraFacing.back,
       torchEnabled: false,
-      autoStart: false, // Don't auto-start barcode stream when default is AI mode
-      formats: const [
-        BarcodeFormat.ean13,
-        BarcodeFormat.ean8,
-        BarcodeFormat.upcA,
-        BarcodeFormat.upcE,
-        BarcodeFormat.code128,
-      ],
+      autoStart: false,
     );
+
+    _initializeAiCamera();
+  }
+
+  Future<void> _initializeAiCamera() async {
+    try {
+      _cameras = await cam.availableCameras();
+      if (_cameras != null && _cameras!.isNotEmpty) {
+        // Select back camera
+        final backCamera = _cameras!.firstWhere(
+          (element) => element.lensDirection == cam.CameraLensDirection.back,
+          orElse: () => _cameras!.first,
+        );
+
+        _aiCameraController = cam.CameraController(
+          backCamera,
+          cam.ResolutionPreset.medium,
+          enableAudio: false,
+        );
+
+        await _aiCameraController!.initialize();
+        if (mounted) {
+          setState(() {
+            _isCameraInitialized = true;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint("Error initializing native camera: $e");
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_isAiMode && _scannerController.value.isInitialized) {
+    if (_isAiMode) {
+      if (_aiCameraController == null || !_aiCameraController!.value.isInitialized) {
+        return;
+      }
       if (state == AppLifecycleState.paused) {
-        _scannerController.stop();
+        _aiCameraController?.dispose();
       } else if (state == AppLifecycleState.resumed) {
-        _scannerController.start();
+        _initializeAiCamera();
+      }
+    } else {
+      if (_barcodeController.value.isInitialized) {
+        if (state == AppLifecycleState.paused) {
+          _barcodeController.stop();
+        } else if (state == AppLifecycleState.resumed) {
+          _barcodeController.start();
+        }
       }
     }
   }
@@ -62,51 +103,53 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _scannerController.dispose();
+    _barcodeController.dispose();
+    _aiCameraController?.dispose();
     super.dispose();
   }
 
-  // Captures photo and analyzes item name using Gemini AI
+  // Captures photo from the live in-app camera feed and analyzes with Gemini AI
   Future<void> _captureAndAnalyzeWithGemini() async {
     if (_isProcessingAi || _hasDetected || _visionModel == null) return;
+    if (_aiCameraController == null || !_aiCameraController!.value.isInitialized) return;
 
     setState(() => _isProcessingAi = true);
 
     try {
-      final ImagePicker picker = ImagePicker();
-      final XFile? imageFile = await picker.pickImage(
-        source: ImageSource.camera,
-        imageQuality: 80,
-      );
+      // Snap picture directly from the live in-app camera preview
+      final cam.XFile rawImage = await _aiCameraController!.takePicture();
+      final Uint8List imageBytes = await rawImage.readAsBytes();
 
-      if (imageFile != null) {
-        final Uint8List imageBytes = await imageFile.readAsBytes();
+      const promptText = '''
+        Analyze this retail product image carefully.
+        Return ONLY the exact item name string as it appears in a store catalog (e.g., "Marlboro Red", "Coca Cola", "Century Tuna"). Keep it clear and concise.
+        If no retail product is identified clearly, return "UNKNOWN".
+      ''';
 
-        final prompt = TextPart('''
-          Analyze this retail product image carefully.
-          Return ONLY the exact item name string as it appears in a store catalog (e.g., "Marlboro Red", "Coca Cola", "Century Tuna"). Keep it clear and concise.
-          If no retail product is identified clearly, return "UNKNOWN".
-        ''');
+      final prompt = TextPart(promptText);
+      final imagePart = DataPart('image/jpeg', imageBytes);
 
-        final imagePart = DataPart('image/jpeg', imageBytes);
+      final response = await _visionModel!.generateContent([
+        Content.multi([prompt, imagePart])
+      ]);
 
-        final response = await _visionModel!.generateContent([
-          Content.multi([prompt, imagePart])
-        ]);
+      final String detectedName = response.text?.trim() ?? 'UNKNOWN';
 
-        final String detectedName = response.text?.trim() ?? 'UNKNOWN';
-
-        if (detectedName != 'UNKNOWN' && detectedName.isNotEmpty && mounted) {
-          _hasDetected = true;
-          Navigator.pop(context, detectedName);
-        } else if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Could not identify product. Try again.")),
-          );
-        }
+      if (detectedName != 'UNKNOWN' && detectedName.isNotEmpty && mounted) {
+        _hasDetected = true;
+        Navigator.pop(context, detectedName);
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Could not identify product. Try again.")),
+        );
       }
     } catch (e) {
       debugPrint("Error running Generative AI Vision: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("AI Analysis Error: $e")),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isProcessingAi = false);
     }
@@ -115,8 +158,12 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(
-        title: Text(_isAiMode ? "AI Vision Assistant" : "Barcode Scanner", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: Text(
+          _isAiMode ? "AI Vision Assistant" : "Barcode Scanner",
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
         backgroundColor: navyBlue,
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
@@ -126,9 +173,9 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               setState(() {
                 _isAiMode = !_isAiMode;
                 if (_isAiMode) {
-                  _scannerController.stop();
+                  _barcodeController.stop();
                 } else {
-                  _scannerController.start();
+                  _barcodeController.start();
                 }
               });
             },
@@ -138,18 +185,14 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
               style: TextStyle(color: tealAccent, fontWeight: FontWeight.bold),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.flash_on, color: Colors.white),
-            onPressed: () => _scannerController.toggleTorch(),
-            tooltip: "Toggle Flashlight",
-          ),
         ],
       ),
       body: Stack(
         children: [
+          // View 1: Barcode Scanner View
           if (!_isAiMode)
             MobileScanner(
-              controller: _scannerController,
+              controller: _barcodeController,
               onDetect: (capture) {
                 if (_hasDetected || _isProcessingAi) return;
 
@@ -158,43 +201,30 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   final String? code = barcode.rawValue;
                   if (code != null && code.isNotEmpty) {
                     _hasDetected = true;
-                    _scannerController.stop();
+                    _barcodeController.stop();
                     Navigator.pop(context, code);
                     return;
                   }
                 }
               },
             )
+          // View 2: Live In-App Camera Feed for AI Vision
+          else if (_isCameraInitialized && _aiCameraController != null)
+            SizedBox.expand(
+              child: cam.CameraPreview(_aiCameraController!),
+            )
           else
-            Container(
-              color: Colors.black,
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.camera_enhance, color: tealAccent.withValues(alpha: 0.5), size: 80),
-                    const SizedBox(height: 20),
-                    const Text(
-                      "AI Vision Assistant Ready",
-                      style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      "Center the item in the box and tap capture to identify",
-                      style: TextStyle(color: Colors.grey, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
+            const Center(
+              child: CircularProgressIndicator(color: Colors.tealAccent),
             ),
 
-          // Targeting Viewfinder Box
+          // Targeting Viewfinder Box Overlay
           Center(
             child: Container(
               width: 260,
               height: 260,
               decoration: BoxDecoration(
-                border: Border.all(color: tealAccent.withValues(alpha: 0.8), width: 2),
+                border: Border.all(color: tealAccent.withOpacity(0.8), width: 2),
                 borderRadius: BorderRadius.circular(20),
               ),
             ),
@@ -230,7 +260,7 @@ class _CameraScreenState extends State<CameraScreen> with WidgetsBindingObserver
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.8),
+                      color: Colors.black.withOpacity(0.8),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Text(

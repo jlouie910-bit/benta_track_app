@@ -25,19 +25,19 @@ dependencies:
   flutter_dotenv: ^5.1.0
 
   # AI, ML Kit & Machine Learning
-  # AI, ML Kit & Machine Learning
   path_provider: ^2.1.2
   google_generative_ai: ^0.4.0
-  google_mlkit_barcode_scanning: ^0.16.1
+  google_mlkit_barcode_scanning: ^0.15.0
   google_mlkit_object_detection: ^0.16.0
-  google_mlkit_image_labeling: ^0.14.0
+  google_mlkit_image_labeling: ^0.15.0
   google_mlkit_text_recognition: ^0.16.0
   tflite_flutter_custom: ^1.2.5
 
   # Camera & Hardware
   camera: ^0.11.0
-  mobile_scanner: ^6.0.2
+  mobile_scanner: ^5.2.3
   image_picker: ^1.1.2
+
   # UI, Charts & Icons
   font_awesome_flutter: ^10.7.0
   fl_chart: ^0.68.0
@@ -67,7 +67,6 @@ flutter:
   assets:
     - assets/benta_track_logo.png
     - .env
-
 # App Launcher Icon Configuration
 flutter_launcher_icons:
   android: "launcher_icon"
@@ -76,6 +75,3 @@ flutter_launcher_icons:
   adaptive_icon_background: "#1E3A5F"
   adaptive_icon_foreground: "assets/benta_track_logo.png"
   remove_alpha_ios: true
-
-dependency_overrides:
-  google_mlkit_commons: ^0.7.0
