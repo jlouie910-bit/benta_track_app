@@ -7,13 +7,21 @@ workflows:
       flutter: stable
       xcode: latest
     scripts:
-      - name: Configure iOS Deployment Target
-        script: |
-          cd ios
-          echo "platform :ios, '15.0'" > Podfile
-          pod repo update
       - name: Get dependencies
         script: flutter pub get
+      - name: Fix Podfile target version
+        script: |
+          cd ios
+          python3 -c "
+          with open('Podfile', 'r') as f:
+              lines = f.readlines()
+          with open('Podfile', 'w') as f:
+              for line in lines:
+                  if 'platform :ios' in line:
+                      f.write(\"platform :ios, '15.0'\n\")
+                  else:
+                      f.write(line)
+          "
       - name: Install pods
         script: |
           cd ios && pod install
