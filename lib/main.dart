@@ -13,17 +13,12 @@ final ValueNotifier<ThemeMode> themeNotifier = ValueNotifier(ThemeMode.light);
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Load environment configuration
-  await dotenv.load(fileName: ".env");
-
-  await Firebase.initializeApp();
-
-  // Load theme preference
-  final prefs = await SharedPreferences.getInstance();
-  final isDark = prefs.getBool('isDarkMode') ?? false;
-  themeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light;
-
+  try { await dotenv.load(fileName: "assets/.env"); } catch (e) { debugPrint('dotenv: $e'); }
+  try { await Firebase.initializeApp(); } catch (e) { debugPrint('firebase: $e'); }
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    themeNotifier.value = (prefs.getBool('isDarkMode') ?? false) ? ThemeMode.dark : ThemeMode.light;
+  } catch (_) {}
   runApp(const BentaTrackApp());
 }
 
@@ -82,7 +77,7 @@ class BentaTrackApp extends StatelessWidget {
 
                 return StreamBuilder<DocumentSnapshot>(
                   stream: FirebaseFirestore.instance
-                      .collection('Users') // Ensure casing matches Firestore rules
+                      .collection('Users')
                       .doc(user.uid)
                       .snapshots(),
                   builder: (context, userSnapshot) {

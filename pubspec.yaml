@@ -66,7 +66,7 @@ flutter:
   # Asset Registrations
   assets:
     - assets/benta_track_logo.png
-    - .env
+    - assets/.env
 # App Launcher Icon Configuration
 flutter_launcher_icons:
   android: "launcher_icon"
