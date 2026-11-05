@@ -97,7 +97,7 @@ class TermsConditionsScreen extends StatelessWidget {
       ),
       _sectionTitle("Scope of Service"),
       _sectionText(
-        "BentaTrack provides a cloud-integrated inventory and sales management platform tailored for micro and small enterprises (MSEs) in the Philippines. We reserve the right to modify, suspend, or terminate features or service availability at any time for system maintenance, security updates, or functional upgrades.",
+        "BentaTrack provides a cloud-integrated inventory and sales management platform tailored for micro enterprises in the Philippines. We reserve the right to modify, suspend, or terminate features or service availability at any time for system maintenance, security updates, or functional upgrades.",
         isDark,
       ),
       _sectionTitle("User Accounts & Security"),
