@@ -10,6 +10,8 @@ const Color _mint = Color(0xFF6EE7B7);
 
 class _ChatMessage {
   final String role; // 'user' or 'ai'
+  // For error bubbles this is the raw "Error:KIND|..." text. It is turned into
+  // a friendly message when drawn, so it follows the selected language.
   final String content;
   final bool isError;
   const _ChatMessage(this.role, this.content, {this.isError = false});
@@ -26,8 +28,12 @@ class _AIChatWidgetState extends State<AIChatWidget> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scroll = ScrollController();
 
-  static const String _welcome =
-      "Kumusta! Ako ang BentaTrack assistant mo. Tanungin mo ako tungkol sa benta, tubo, stocks, o presyo ng paninda sa Puregold at wholesale.";
+  // 'tl' = Taglish, 'en' = English. Static, so the choice is kept when the
+  // chat is closed and opened again (until the app is restarted).
+  static String _savedLang = 'tl';
+  String _lang = _savedLang;
+  bool get _en => _lang == 'en';
+  String _t(String tl, String en) => _en ? en : tl;
 
   final List<_ChatMessage> _messages = [];
   bool _isLoading = false;
@@ -40,19 +46,10 @@ class _AIChatWidgetState extends State<AIChatWidget> {
   DateTime? _cachedAt;
   static const Duration _cacheTtl = Duration(seconds: 60);
 
-  // Collection and field names - change these if yours are different.
+  // Names must match Firestore exactly (case-sensitive) and Analytics.dart.
   static const String _transactionsCollection = 'transactions';
-  static const String _inventoryCollection = 'inventory';
-  static const String _dateField = 'date';
-
-  static const List<String> _starterSuggestions = [
-    'Magkano ang tubo ko ngayon?',
-    'Ano ang best seller ko?',
-    'Ano ang dapat kong i-restock?',
-    'Magkano ang Lucky Me Pancit Canton sa Puregold?',
-    'Saan mura bumili ng softdrinks na paninda?',
-    'Anong paninda ang matumal?',
-  ];
+  static const String _inventoryCollection = 'Inventory';
+  static const String _dateField = 'timestamp';
 
   @override
   void dispose() {
@@ -62,35 +59,83 @@ class _AIChatWidgetState extends State<AIChatWidget> {
   }
 
   // ---------------------------------------------------------------------------
+  // Texts (Tagalog / English)
+  // ---------------------------------------------------------------------------
+  String get _welcome => _t(
+        'Kumusta! Ako ang BentaTrack assistant mo. Tanungin mo ako tungkol sa benta, tubo, stocks, o presyo ng paninda sa Puregold at wholesale.',
+        "Hi! I'm your BentaTrack assistant. Ask me about your sales, profit, stocks, or product prices at Puregold and wholesale.",
+      );
+
+  List<String> get _starterSuggestions => _en
+      ? const [
+          'How much is my profit today?',
+          'What is my best seller?',
+          'What should I restock?',
+          'How much is Lucky Me Pancit Canton at Puregold?',
+          'Where can I buy soft drinks cheaply for my store?',
+          'Which products are slow-moving?',
+        ]
+      : const [
+          'Magkano ang tubo ko ngayon?',
+          'Ano ang best seller ko?',
+          'Ano ang dapat kong i-restock?',
+          'Magkano ang Lucky Me Pancit Canton sa Puregold?',
+          'Saan mura bumili ng softdrinks na paninda?',
+          'Anong paninda ang matumal?',
+        ];
+
+  // ---------------------------------------------------------------------------
   // Follow-up suggestions based on the last question
   // ---------------------------------------------------------------------------
+  static final RegExp _ownRe = RegExp(
+      r'tubo|tutubuin|profit|benta|sales|kita|earn|income|revenue|stock|best\s*seller|matumal|slow|restock|inventory',
+      caseSensitive: false);
+  static final RegExp _marketRe = RegExp(
+      r'puregold|presyo|price|magkano|how\s+much|wholesale|murang|mura|saan|cheap|where',
+      caseSensitive: false);
+
   List<String> _followUpsFor(String lastUser) {
-    final s = lastUser.toLowerCase();
-    final own = RegExp(r'tubo|profit|benta|sales|kita|stock|best seller|matumal|restock')
-        .hasMatch(s);
-    final market = RegExp(r'puregold|presyo|price|magkano|wholesale|murang|mura|saan')
-        .hasMatch(s);
+    final own = _ownRe.hasMatch(lastUser);
+    final market = _marketRe.hasMatch(lastUser);
 
     // "Magkano ang tubo ko?" is about the store, not about market prices.
     if (market && !own) {
-      return [
-        'Magkano ang tubo ko kung ibenta ko ito?',
-        'Saan pa mura bumili nito?',
-        'Ano ang dapat i-restock ko?',
-      ];
+      return _en
+          ? const [
+              'How much will I earn if I sell this?',
+              'Where else is it cheaper?',
+              'What should I restock?',
+            ]
+          : const [
+              'Magkano ang tubo ko kung ibenta ko ito?',
+              'Saan pa mura bumili nito?',
+              'Ano ang dapat i-restock ko?',
+            ];
     }
     if (own) {
-      return [
-        'Ano ang best seller ko?',
-        'Anong paninda ang matumal?',
-        'Paano ko madadagdagan ang tubo ko?',
-      ];
+      return _en
+          ? const [
+              'What is my best seller?',
+              'Which products are slow-moving?',
+              'How can I increase my profit?',
+            ]
+          : const [
+              'Ano ang best seller ko?',
+              'Anong paninda ang matumal?',
+              'Paano ko madadagdagan ang tubo ko?',
+            ];
     }
-    return [
-      'Magkano ang tubo ko ngayon?',
-      'Ano ang dapat kong i-restock?',
-      'Magbigay ng tips para lumaki ang benta',
-    ];
+    return _en
+        ? const [
+            'How much is my profit today?',
+            'What should I restock?',
+            'Give me tips to grow my sales',
+          ]
+        : const [
+            'Magkano ang tubo ko ngayon?',
+            'Ano ang dapat kong i-restock?',
+            'Magbigay ng tips para lumaki ang benta',
+          ];
   }
 
   // ---------------------------------------------------------------------------
@@ -110,39 +155,60 @@ class _AIChatWidgetState extends State<AIChatWidget> {
         .toList();
   }
 
-  /// Newest [limit] documents of [collection] that belong to [uid].
-  /// [newestFirstBy] needs a composite index (userId + that field). Firestore
-  /// prints a link in the Debug Console to create it with one click. Until
-  /// then (or if the field name is different) it falls back to an unordered query.
-  Future<List<Map<String, dynamic>>> _fetch(
-    String collection,
-    String uid, {
-    String? newestFirstBy,
-    int limit = 150,
-  }) async {
+  /// Recent transactions of this user, newest first. Same query shape as the
+  /// Analytics screen (userId + timestamp, ordered by timestamp), so it uses
+  /// the index that already exists. Covers the previous month too, because
+  /// the AI compares "this month" with "last month".
+  Future<List<Map<String, dynamic>>> _fetchTransactions(String uid) async {
     final base = FirebaseFirestore.instance
-        .collection(collection)
+        .collection(_transactionsCollection)
         .where('userId', isEqualTo: uid);
 
-    if (newestFirstBy != null) {
-      try {
-        final snap =
-            await base.orderBy(newestFirstBy, descending: true).limit(limit).get();
-        // Documents without that field are skipped by orderBy; if nothing
-        // came back, try the unordered query below.
-        if (snap.docs.isNotEmpty) return _docsToMaps(snap);
-      } catch (e) {
-        debugPrint('Ordered query on $collection failed (missing index?): $e');
-      }
+    final now = DateTime.now();
+    final prevMonthStart = DateTime(now.year, now.month - 1, 1);
+    final thirtyFiveDaysAgo = DateTime(now.year, now.month, now.day - 35);
+    final from =
+        prevMonthStart.isBefore(thirtyFiveDaysAgo) ? prevMonthStart : thirtyFiveDaysAgo;
+
+    try {
+      final snap = await base
+          .where(_dateField, isGreaterThanOrEqualTo: Timestamp.fromDate(from))
+          .orderBy(_dateField, descending: true)
+          .limit(600)
+          .get();
+      return _docsToMaps(snap);
+    } catch (e) {
+      debugPrint('Ordered transactions query failed (missing index?): $e');
     }
 
     try {
-      final snap = await base.limit(limit).get();
+      final snap = await base.limit(300).get();
       return _docsToMaps(snap);
     } catch (e) {
-      debugPrint('Query on $collection failed: $e');
+      debugPrint('Transactions query failed: $e');
       return []; // a missing collection should never break the chat
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchInventory(String uid) async {
+    Future<List<Map<String, dynamic>>> read(String collection) async {
+      try {
+        final snap = await FirebaseFirestore.instance
+            .collection(collection)
+            .where('userId', isEqualTo: uid)
+            .limit(400)
+            .get();
+        return _docsToMaps(snap);
+      } catch (e) {
+        debugPrint('Query on $collection failed: $e');
+        return [];
+      }
+    }
+
+    final items = await read(_inventoryCollection);
+    if (items.isNotEmpty) return items;
+    // Safety net in case an older build wrote to a lower-case collection.
+    return read(_inventoryCollection.toLowerCase());
   }
 
   Future<List<Map<String, dynamic>>> _loadStoreData({bool force = false}) async {
@@ -159,14 +225,13 @@ class _AIChatWidgetState extends State<AIChatWidget> {
     }
 
     final results = await Future.wait([
-      _fetch(_transactionsCollection, uid,
-          newestFirstBy: _dateField, limit: 300),
-      _fetch(_inventoryCollection, uid, limit: 150),
+      _fetchTransactions(uid),
+      _fetchInventory(uid),
     ]);
 
     final data = [
-      for (final t in results[0]) {'type': 'transaction', ...t},
-      for (final i in results[1]) {'type': 'inventory', ...i},
+      for (final t in results[0]) {...t, 'type': 'transaction'},
+      for (final i in results[1]) {...i, 'type': 'inventory'},
     ];
 
     _cachedData = data;
@@ -209,6 +274,7 @@ class _AIChatWidgetState extends State<AIChatWidget> {
 
     final history = _buildHistory();
     final myRequest = ++_requestId;
+    final lang = _lang; // the reply follows the language chosen when asking
 
     setState(() {
       _messages.add(_ChatMessage('user', text));
@@ -224,6 +290,7 @@ class _AIChatWidgetState extends State<AIChatWidget> {
         userPrompt: text,
         businessData: data,
         history: history,
+        language: lang,
       );
     } catch (e) {
       debugPrint('Chat send failed: $e');
@@ -237,11 +304,7 @@ class _AIChatWidgetState extends State<AIChatWidget> {
     if (failed) debugPrint(reply); // full reason shows in the Debug Console
 
     setState(() {
-      _messages.add(_ChatMessage(
-        'ai',
-        failed ? AIService.friendlyError(reply) : reply,
-        isError: failed,
-      ));
+      _messages.add(_ChatMessage('ai', reply, isError: failed));
       _isLoading = false;
     });
     _scrollToBottom();
@@ -288,9 +351,69 @@ class _AIChatWidgetState extends State<AIChatWidget> {
     });
   }
 
+  void _setLanguage(String code) {
+    if (code == _lang) return;
+    setState(() {
+      _lang = code;
+      _savedLang = code;
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // UI pieces
   // ---------------------------------------------------------------------------
+  Widget _languageRow() {
+    Widget pill(String code, String label) {
+      final selected = _lang == code;
+      return GestureDetector(
+        onTap: () => _setLanguage(code),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          decoration: BoxDecoration(
+            color: selected ? _navy : Colors.transparent,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : _navy,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.translate, size: 16, color: Colors.black45),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              _t('Wika ng sagot', 'Reply language'),
+              style: const TextStyle(color: Colors.black54, fontSize: 12.5),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEAF1FA),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [pill('tl', 'Tagalog'), pill('en', 'English')],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _suggestionChip(String text) {
     return ActionChip(
       label: Text(text, style: const TextStyle(color: _navy, fontSize: 13)),
@@ -304,8 +427,8 @@ class _AIChatWidgetState extends State<AIChatWidget> {
   Widget _retryChip() {
     return ActionChip(
       avatar: const Icon(Icons.refresh, size: 16, color: _navy),
-      label: const Text('Subukan ulit',
-          style: TextStyle(color: _navy, fontSize: 13)),
+      label: Text(_t('Subukan ulit', 'Try again'),
+          style: const TextStyle(color: _navy, fontSize: 13)),
       backgroundColor: const Color(0xFFEAF1FA),
       side: BorderSide(color: _navy.withValues(alpha: 0.15)),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -315,16 +438,19 @@ class _AIChatWidgetState extends State<AIChatWidget> {
 
   Widget _bubble(_ChatMessage m) {
     final isAi = m.role == 'ai';
+    final shown =
+        m.isError ? AIService.friendlyError(m.content, language: _lang) : m.content;
+
     return Align(
       alignment: isAi ? Alignment.centerLeft : Alignment.centerRight,
       child: GestureDetector(
         onLongPress: () {
-          Clipboard.setData(ClipboardData(text: m.content));
+          Clipboard.setData(ClipboardData(text: shown));
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('Na-copy ang sagot'),
-                duration: Duration(seconds: 1)),
+            SnackBar(
+                content: Text(_t('Na-copy ang sagot', 'Copied')),
+                duration: const Duration(seconds: 1)),
           );
         },
         child: Container(
@@ -344,7 +470,7 @@ class _AIChatWidgetState extends State<AIChatWidget> {
             ),
           ),
           child: Text(
-            m.content,
+            shown,
             style: TextStyle(
                 color: isAi ? Colors.black87 : Colors.white,
                 fontSize: 14.5,
@@ -365,17 +491,17 @@ class _AIChatWidgetState extends State<AIChatWidget> {
           color: Colors.grey[200],
           borderRadius: BorderRadius.circular(16),
         ),
-        child: const Row(
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
+            const SizedBox(
               width: 14,
               height: 14,
               child: CircularProgressIndicator(strokeWidth: 2, color: _navy),
             ),
-            SizedBox(width: 10),
-            Text('Nag-iisip...',
-                style: TextStyle(color: Colors.black54, fontSize: 13)),
+            const SizedBox(width: 10),
+            Text(_t('Nag-iisip...', 'Thinking...'),
+                style: const TextStyle(color: Colors.black54, fontSize: 13)),
           ],
         ),
       ),
@@ -386,10 +512,10 @@ class _AIChatWidgetState extends State<AIChatWidget> {
     return ListView(
       controller: _scroll,
       children: [
-        _bubble(const _ChatMessage('ai', _welcome)),
+        _bubble(_ChatMessage('ai', _welcome)),
         const SizedBox(height: 12),
-        const Text('Subukan mong itanong:',
-            style: TextStyle(
+        Text(_t('Subukan mong itanong:', 'Try asking:'),
+            style: const TextStyle(
                 color: Colors.black54,
                 fontSize: 13,
                 fontWeight: FontWeight.w600)),
@@ -470,7 +596,7 @@ class _AIChatWidgetState extends State<AIChatWidget> {
                 ),
                 if (_messages.isNotEmpty)
                   IconButton(
-                    tooltip: 'Bagong chat',
+                    tooltip: _t('Bagong chat', 'New chat'),
                     onPressed: _clearChat,
                     icon: const Icon(Icons.refresh, color: Colors.black54),
                   ),
@@ -480,7 +606,9 @@ class _AIChatWidgetState extends State<AIChatWidget> {
                 ),
               ],
             ),
-            const Divider(),
+            _languageRow(),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
             Expanded(
               child: _messages.isEmpty ? _welcomeView() : _conversationView(),
             ),
@@ -492,7 +620,8 @@ class _AIChatWidgetState extends State<AIChatWidget> {
               maxLines: 4,
               textInputAction: TextInputAction.send,
               decoration: InputDecoration(
-                hintText: 'Magtanong tungkol sa tubo, stocks, presyo...',
+                hintText: _t('Magtanong tungkol sa tubo, stocks, presyo...',
+                    'Ask about profit, stocks, prices...'),
                 hintStyle: const TextStyle(color: Colors.black54),
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 18, vertical: 12),

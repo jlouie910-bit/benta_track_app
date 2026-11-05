@@ -221,7 +221,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     // Secure password validation check
     if (!_isPasswordStrong(_passwordController.text)) {
       _showSnackBar(
-        "Password must be at least 8 characters long.",
+        "Password must contain at least 8 characters long 1 uppercase letter, 1 lowercase letter, and 1 number.",
         Colors.redAccent,
       );
       return;
@@ -323,7 +323,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     const SizedBox(height: 8),
                     // Helpful indicator text for password requirements
                     const Text(
-                      "Must be 8+ chars with at least 1 uppercase letter and 1 number.",
+                      "create a strong password",
                       style: TextStyle(color: Colors.white54, fontSize: 11),
                     ),
                     const SizedBox(height: 15),
