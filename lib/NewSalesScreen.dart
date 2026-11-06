@@ -57,7 +57,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
 
     setState(() {
       int index = _cartItems.indexWhere((item) => item['id'] == id && item['isSellingAsPack'] == isSellingAsPack);
-      
+
       int requiredStockUnits = isSellingAsPack ? (quantityToAdd * piecesPerPack) : quantityToAdd;
 
       if (index != -1) {
@@ -209,7 +209,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
 
   void _showEditQuantityDialog(StateSetter setModalState, String docId, int currentQty, int maxLimit, Map<String, Map<String, dynamic>> tempSelections) {
     final TextEditingController qtyController = TextEditingController(text: currentQty.toString());
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -262,7 +262,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
   void _openMultiSelectSearchModal() async {
     if (user == null) return;
 
-    final Map<String, Map<String, dynamic>> tempSelections = {}; 
+    final Map<String, Map<String, dynamic>> tempSelections = {};
     String searchQuery = "";
     String selectedCategory = "All Categories";
 
@@ -409,7 +409,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                                       ],
                                     ),
                                     const SizedBox(height: 4),
-                                    Text("₱${displayPrice.toStringAsFixed(2)} ${isPackMode ? '(Pack)' : '(Piece)'}", 
+                                    Text("₱${displayPrice.toStringAsFixed(2)} ${isPackMode ? '(Pack)' : '(Piece)'}",
                                       style: TextStyle(color: navyBlue, fontWeight: FontWeight.w600, fontSize: 12)),
                                     const SizedBox(height: 4),
                                     Row(
@@ -464,7 +464,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                                                     border: Border.all(color: navyBlue.withValues(alpha: 0.3)),
                                                   ),
                                                   child: Text(
-                                                    "$qty", 
+                                                    "$qty",
                                                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: navyBlue),
                                                   ),
                                                 ),
@@ -562,58 +562,137 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     );
   }
 
+  // ── UPGRADED: handles both barcode scans AND AI vision results ──
   void _openCameraScanner() async {
-    final scanResult = await Navigator.push(
+    final scanResult = await Navigator.push<String>(
       context,
       MaterialPageRoute(builder: (context) => const CameraScreen()),
     );
 
-    if (scanResult != null && scanResult is String && mounted) {
-      final firestore = FirebaseFirestore.instance;
-      
-      // Global inventory lookup across all users for shared barcode auto-fill
-      var querySnapshot = await firestore
-          .collection('Inventory')
-          .where('barcode', isEqualTo: scanResult)
-          .limit(1)
-          .get();
+    if (scanResult == null || scanResult.trim().isEmpty || !mounted) return;
 
-      if (querySnapshot.docs.isEmpty) {
-        querySnapshot = await firestore
-            .collection('Inventory')
-            .where('userId', isEqualTo: user?.uid)
-            .where('itemName', isEqualTo: scanResult)
-            .get();
-      }
+    final firestore = FirebaseFirestore.instance;
 
-      if (querySnapshot.docs.isNotEmpty) {
-        final doc = querySnapshot.docs.first;
-        final data = doc.data();
-        _addItemToCart(
-          id: doc.id,
-          name: data['itemName'] ?? 'Unknown Item',
-          piecePrice: (data['price'] as num?)?.toDouble() ?? 0.0,
-          pieceCost: (data['cost'] as num?)?.toDouble() ?? 0.0,
-          stock: (data['stock'] as num?)?.toInt() ?? 0,
-          quantityToAdd: 1,
-          piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
-          isSellingAsPack: false,
-        );
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Auto-filled & added: ${data['itemName']}"), backgroundColor: Colors.green),
-        );
-        return;
-      }
+    // ── Step 1: Try barcode match (exact, global) ──────────────
+    var querySnapshot = await firestore
+    .collection('Inventory')
+    .where('userId', isEqualTo: user?.uid)
+    .where('barcode', isEqualTo: scanResult)
+    .limit(1)
+    .get();
 
-      bool isNumericBarcode = RegExp(r'^\d+$').hasMatch(scanResult);
-      if (isNumericBarcode) {
-        _promptForUnknownBarcodeName(scanResult);
-      } else {
-        _verifyAndNavigateToAddItemWithData({
-          'itemName': scanResult,
-          'barcode': '',
-        });
+    if (querySnapshot.docs.isNotEmpty) {
+      final doc = querySnapshot.docs.first;
+      final data = doc.data();
+      _addItemToCart(
+        id: doc.id,
+        name: data['itemName'] ?? 'Unknown Item',
+        piecePrice: (data['price'] as num?)?.toDouble() ?? 0.0,
+        pieceCost: (data['cost'] as num?)?.toDouble() ?? 0.0,
+        stock: (data['stock'] as num?)?.toInt() ?? 0,
+        quantityToAdd: 1,
+        piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
+        isSellingAsPack: false,
+      );
+      _showSnackBar("Auto-filled: ${data['itemName']}");
+      return;
+    }
+
+    // ── Step 2: Fetch user's inventory for fuzzy name match ────
+    // (handles AI vision results like "Marlboro Red Softpack" → "Marlboro Red")
+    final allDocsSnap = await firestore
+        .collection('Inventory')
+        .where('userId', isEqualTo: user?.uid)
+        .get();
+
+    if (allDocsSnap.docs.isEmpty) {
+      _handleUnknownScan(scanResult);
+      return;
+    }
+
+    final allItems = allDocsSnap.docs
+        .map((doc) => <String, dynamic>{'_docId': doc.id, ...doc.data()})
+        .toList();
+
+    final matched = _fuzzyMatchItem(scanResult, allItems);
+
+    if (matched != null) {
+      _addItemToCart(
+        id: matched['_docId'] as String,
+        name: matched['itemName'] ?? 'Unknown Item',
+        piecePrice: (matched['price'] as num?)?.toDouble() ?? 0.0,
+        pieceCost: (matched['cost'] as num?)?.toDouble() ?? 0.0,
+        stock: (matched['stock'] as num?)?.toInt() ?? 0,
+        quantityToAdd: 1,
+        piecesPerPack: (matched['piecesPerPack'] as num?)?.toInt() ?? 1,
+        isSellingAsPack: false,
+      );
+      _showSnackBar("Auto-filled: ${matched['itemName']}");
+      return;
+    }
+
+    // ── Step 3: Nothing matched — prompt user ──────────────────
+    _handleUnknownScan(scanResult);
+  }
+
+  /// Fuzzy match: exact → prefix → contains → word overlap.
+  /// Returns the best matching inventory item or null.
+  Map<String, dynamic>? _fuzzyMatchItem(
+    String scanResult,
+    List<Map<String, dynamic>> items,
+  ) {
+    final query = scanResult.trim().toLowerCase();
+    String nameOf(Map<String, dynamic> item) =>
+        (item['itemName'] as String? ?? '').toLowerCase();
+
+    // 1. Exact
+    for (final item in items) {
+      if (nameOf(item) == query) return item;
+    }
+    // 2. Prefix (either direction)
+    for (final item in items) {
+      final n = nameOf(item);
+      if (n.startsWith(query) || query.startsWith(n)) return item;
+    }
+    // 3. Contains (either direction)
+    for (final item in items) {
+      final n = nameOf(item);
+      if (n.contains(query) || query.contains(n)) return item;
+    }
+    // 4. Word overlap — at least 1 significant word (≥3 chars)
+    final queryWords = query
+        .split(RegExp(r'\s+'))
+        .where((w) => w.length >= 3)
+        .toSet();
+    if (queryWords.isEmpty) return null;
+
+    Map<String, dynamic>? best;
+    int bestScore = 0;
+    for (final item in items) {
+      final nameWords = nameOf(item)
+          .split(RegExp(r'\s+'))
+          .where((w) => w.length >= 3)
+          .toSet();
+      final overlap = queryWords.intersection(nameWords).length;
+      if (overlap > bestScore) {
+        bestScore = overlap;
+        best = item;
       }
+    }
+    return bestScore >= 1 ? best : null;
+  }
+
+  /// Called when scan result doesn't match anything in inventory.
+  void _handleUnknownScan(String scanResult) {
+    final bool isNumericBarcode = RegExp(r'^\d+$').hasMatch(scanResult);
+    if (isNumericBarcode) {
+      _promptForUnknownBarcodeName(scanResult);
+    } else {
+      // AI returned a name we don't have — offer to add it as a new item
+      _verifyAndNavigateToAddItemWithData({
+        'itemName': scanResult,
+        'barcode': '',
+      });
     }
   }
 
@@ -662,7 +741,6 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
               onPressed: () {
                 String enteredName = nameController.text.trim();
                 Navigator.pop(context);
-
                 _verifyAndNavigateToAddItemWithData({
                   'barcode': scannedBarcode,
                   'itemName': enteredName.isNotEmpty ? enteredName : 'New Item',
@@ -775,8 +853,8 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         if (!doc.exists) throw "Item '${item['name']}' not found.";
 
         int currentStock = (doc['stock'] as num).toInt();
-        int currentTotalSold = (doc.data() as Map<String, dynamic>).containsKey('totalSold') 
-            ? (doc['totalSold'] as num).toInt() 
+        int currentTotalSold = (doc.data() as Map<String, dynamic>).containsKey('totalSold')
+            ? (doc['totalSold'] as num).toInt()
             : 0;
 
         int requestedQty = (item['quantity'] as num).toInt();
@@ -790,7 +868,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
         double piecePrice = (item['price'] as num).toDouble();
         double pieceCost = (item['cost'] as num).toDouble();
 
-        double itemProfit = isPack 
+        double itemProfit = isPack
             ? ((piecePrice * piecesPerPack) - (pieceCost * piecesPerPack)) * requestedQty
             : (piecePrice - pieceCost) * requestedQty;
 
@@ -953,7 +1031,7 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
                     onSelected: (bool selected) {
                       setState(() {
                         item['isSellingAsPack'] = selected;
-                        item['quantity'] = 1; 
+                        item['quantity'] = 1;
                         _calculateTotal();
                       });
                     },

@@ -59,6 +59,7 @@ class TermsConditionsScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Effective Date Info Box
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -74,15 +75,80 @@ class TermsConditionsScreen extends StatelessWidget {
                   "Effective Date: October 2026",
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
-                    fontSize: 13,
+                    fontSize: 14,
                     color: isDark ? Colors.white70 : navyBlue,
                   ),
                 ),
               ],
             ),
           ),
+          const SizedBox(height: 16),
+          // Plain-Language Summary Box
+          _plainLanguageSummaryCard(isDark),
           const SizedBox(height: 10),
           ...sections,
+        ],
+      ),
+    );
+  }
+
+  Widget _plainLanguageSummaryCard(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF242526) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: isDark ? Colors.white12 : Colors.grey.withValues(alpha: 0.2),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: const [
+              Icon(Icons.bolt_rounded, color: Colors.amber, size: 20),
+              SizedBox(width: 8),
+              Text(
+                "TL;DR — Quick Summary",
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                  color: navyBlue,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _summaryBullet("Your data is yours. We don’t sell it to anyone."),
+          _summaryBullet("Keep your store password and 4-digit MPIN private."),
+          _summaryBullet("Don’t try to hack or misuse the app."),
+          _summaryBullet("Keep your own backup copies of critical store records."),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryBullet(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("• ", style: TextStyle(fontWeight: FontWeight.bold, color: navyBlue)),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(fontSize: 14, height: 1.4, color: Colors.black87),
+            ),
+          ),
         ],
       ),
     );
@@ -92,27 +158,27 @@ class TermsConditionsScreen extends StatelessWidget {
     return [
       _sectionTitle("Acceptance of Terms"),
       _sectionText(
-        "By accessing, registering, or using BentaTrack, you agree to be legally bound by these Terms of Service. If you disagree with any portion of these terms, you must immediately discontinue use of the mobile application.",
+        "By using BentaTrack, you agree to follow these rules. If you do not agree, please stop using the app immediately.",
         isDark,
       ),
       _sectionTitle("Scope of Service"),
       _sectionText(
-        "BentaTrack provides a cloud-integrated inventory and sales management platform tailored for micro enterprises in the Philippines. We reserve the right to modify, suspend, or terminate features or service availability at any time for system maintenance, security updates, or functional upgrades.",
+        "BentaTrack is built to help sari-sari store owners in the Philippines manage their inventory and sales easily. We may update or improve features from time to time for security and maintenance.",
         isDark,
       ),
       _sectionTitle("User Accounts & Security"),
       _sectionText(
-        "You are entirely responsible for maintaining the strict confidentiality of your account credentials, password, and 4-digit security MPIN. BentaTrack shall not be held liable for any loss, unauthorized modifications, or damages arising from your failure to safeguard your account information.",
+        "You are responsible for keeping your login details, password, and 4-digit MPIN secure. BentaTrack is not liable for any losses if someone else accesses your account due to shared credentials.",
         isDark,
       ),
       _sectionTitle("Acceptable Use Policy"),
       _sectionText(
-        "Users are strictly prohibited from reverse-engineering the application architecture, attempting unauthorized database breaches, uploading malicious code, or utilizing the platform for fraudulent or unlawful commercial transactions.",
+        "Please use the app honestly. Do not attempt to reverse-engineer the code, breach our database security, upload harmful files, or use the platform for illegal transactions.",
         isDark,
       ),
       _sectionTitle("Limitation of Liability"),
       _sectionText(
-        "The application is provided on an 'as is' and 'as available' basis without warranties of any kind, whether express or implied. BentaTrack does not guarantee uninterrupted operational availability or complete error-free data synchronization under unstable network conditions.",
+        "The app is provided 'as is'. While we do our best to keep your records synced, we cannot guarantee zero downtime if your mobile network connection drops suddenly.",
         isDark,
       ),
     ];
@@ -122,22 +188,27 @@ class TermsConditionsScreen extends StatelessWidget {
     return [
       _sectionTitle("Information We Collect"),
       _sectionText(
-        "To provide effective inventory processing and authentication services, we collect account registration data including your store name, business email address, and encrypted security parameters (such as your MPIN). Inventory records and product metrics entered are securely stored under your account identifier.",
+        "To run your store management smoothly, we collect basic details like your store name, business email, encrypted security credentials (MPIN), and your inventory records.",
         isDark,
       ),
-      _sectionTitle("Utilization of Data"),
+      _sectionTitle("Customer Records & Utang Tracking"),
       _sectionText(
-        "Collected information is utilized exclusively for generating business analytics, tracking stock performance, and operating core application features. We do not sell, trade, or transfer your proprietary business records or personal identifiers to unauthorized third parties.",
+        "If you record customer names, phone numbers, or credit balances (utang) inside the app, this data remains strictly under your account. We treat your customers' personal information with utmost confidentiality and secure it just like your own business records.",
         isDark,
       ),
-      _sectionTitle("Cloud Storage & Data Security"),
+      _sectionTitle("How We Use Your Data"),
       _sectionText(
-        "We implement industry-standard encryption protocols and secure cloud databases (Firebase) to protect your records. Sensitive account configurations and verification checks are further secured using localized PIN protection.",
+        "Your data is used solely to generate your store analytics and keep your inventory synced across devices. We never sell, trade, or share your proprietary business metrics with third parties.",
         isDark,
       ),
-      _sectionTitle("Compliance with Privacy Laws"),
+      _sectionTitle("Cloud Storage & Security"),
       _sectionText(
-        "Our data processing practices adhere to standard data privacy principles, respecting user confidentiality, data minimization, and secure account management rights.",
+        "Your records are protected using industry-standard cloud encryption (Firebase) and localized PIN authentication on your device.",
+        isDark,
+      ),
+      _sectionTitle("Compliance with Philippine Law (RA 10173)"),
+      _sectionText(
+        "We fully comply with the Data Privacy Act of 2012 (Republic Act No. 10173) in the Philippines. You have full rights to access, correct, or request deletion of your store data at any time.\n\nFor privacy questions or data deletion requests, contact our support team at: support@bentatrack.com",
         isDark,
       ),
     ];
@@ -170,10 +241,11 @@ class TermsConditionsScreen extends StatelessWidget {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 elevation: 0,
               ),
-              onPressed: () => Navigator.pop(context),
+              // Passing `true` back allows the parent screen to automatically check the consent box
+              onPressed: () => Navigator.pop(context, true),
               child: const Text(
                 "Acknowledge & Close",
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
             ),
           ),
@@ -186,7 +258,7 @@ class TermsConditionsScreen extends StatelessWidget {
             ),
             child: const Text(
               "View Third-Party Open Source Notices",
-              style: TextStyle(color: Colors.grey, fontSize: 12),
+              style: TextStyle(color: Colors.grey, fontSize: 13),
             ),
           ),
         ],
@@ -196,12 +268,12 @@ class TermsConditionsScreen extends StatelessWidget {
 
   Widget _sectionTitle(String title) {
     return Padding(
-      padding: const EdgeInsets.only(top: 22, bottom: 8),
+      padding: const EdgeInsets.only(top: 24, bottom: 8),
       child: Text(
         title,
         style: const TextStyle(
           color: navyBlue,
-          fontSize: 15,
+          fontSize: 16,
           fontWeight: FontWeight.bold,
           letterSpacing: 0.3,
         ),
@@ -213,7 +285,7 @@ class TermsConditionsScreen extends StatelessWidget {
     return Text(
       text,
       style: TextStyle(
-        fontSize: 13.5,
+        fontSize: 15,
         height: 1.6,
         fontWeight: FontWeight.normal,
         color: isDark ? Colors.white70 : Colors.black87,

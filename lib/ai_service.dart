@@ -905,35 +905,46 @@ class AIService {
   // 1. Vision: identify an item from a photo
   // ---------------------------------------------------------------------------
   static Future<Map<String, dynamic>?> detectItemFromImage(File imageFile) async {
-    const sysInstruct =
-        "You are an inventory scanner for a sari-sari store in the Philippines. "
-        "Look at the image and return ONLY a JSON object with keys: "
-        "itemName (specific product name and brand as printed on the package), "
-        "category (one of: Food Products & Staples, Snacks & Treats, Beverages, Personal Care & Hygiene, Household & Cleaning Supplies), "
-        "estimatedPrice (typical Philippine retail price in PHP as a numeric string, or empty string if unknown). "
-        "Do not guess a brand you cannot read.";
+  const sysInstruct =
+      "You are an inventory scanner for a sari-sari store in the Philippines. "
+      "Look at the image and return ONLY a JSON object with keys: "
+      "itemName (specific product name and brand as printed on the package), "
+      "category (one of: Food Products & Staples, Snacks & Treats, Beverages, Personal Care & Hygiene, Household & Cleaning Supplies), "
+      "estimatedPrice (typical Philippine retail price in PHP as a numeric string, or empty string if unknown). "
+      "Do not guess a brand you cannot read.";
 
-    try {
-      final bytes = await imageFile.readAsBytes();
-      final text = await _generate(
-        systemInstruction: sysInstruct,
-        parts: [
-          {'text': 'Identify this retail item and extract product details.'},
-          {
-            'inline_data': {
-              'mime_type': 'image/jpeg',
-              'data': base64Encode(bytes),
-            }
-          },
-        ],
-        jsonOutput: true,
-        temperature: 0.1,
-      );
-      return text == null ? null : {'rawResult': text};
-    } catch (e) {
-      return {'error': e.toString()};
-    }
+  try {
+    final bytes = await imageFile.readAsBytes();
+    final text = await _generate(
+      systemInstruction: sysInstruct,
+      parts: [
+        {'text': 'Identify this retail item and extract product details.'},
+        {
+          'inline_data': {
+            'mime_type': 'image/jpeg',
+            'data': base64Encode(bytes),
+          }
+        },
+      ],
+      jsonOutput: true,
+      temperature: 0.1,
+    );
+    if (text == null) return null;
+
+    // Strip ```json fences in case the model adds them
+    final cleaned = text.replaceAll(RegExp(r'```json|```'), '').trim();
+    var decoded = jsonDecode(cleaned);
+    if (decoded is List && decoded.isNotEmpty) decoded = decoded.first;
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    return null;
+  } on AIException catch (e) {
+    debugPrint('Vision failed: $e');
+    return {'error': e.kind};
+  } catch (e) {
+    debugPrint('Vision failed: $e');
+    return {'error': 'OTHER'};
   }
+}
 
   // ---------------------------------------------------------------------------
   // 2. Business insight (dashboard / analytics)
