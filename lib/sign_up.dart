@@ -6,7 +6,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'auth_service.dart';
 import 'terms_conditions.dart';
-import 'Navigation.dart';
 import 'WelcomeSetupScreen.dart';
 import 'phone_auth_helper.dart';
 
