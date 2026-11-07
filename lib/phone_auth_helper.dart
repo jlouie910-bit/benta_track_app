@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class PhoneAuthHelper {
@@ -102,8 +103,16 @@ class _PhoneOtpSheetState extends State<_PhoneOtpSheet> {
         return "No internet connection. Please try again.";
       case 'captcha-check-failed':
         return "Verification check failed. Please try again.";
+      case 'app-not-authorized':
+      case 'missing-client-identifier':
+        return "App not authorized. Add your SHA-1/SHA-256 in Firebase.";
+      case 'operation-not-allowed':
+        return "Phone sign-in is disabled or this region is blocked.";
       default:
-        return "Something went wrong. Please try again.";
+        // Debug builds show the real reason; release builds stay friendly.
+        return kDebugMode
+            ? "[${e.code}] ${e.message}"
+            : "Something went wrong. Please try again.";
     }
   }
 
@@ -124,6 +133,7 @@ class _PhoneOtpSheetState extends State<_PhoneOtpSheet> {
           await _signIn(credential);
         },
         verificationFailed: (FirebaseAuthException e) {
+        debugPrint('Phone auth failed: ${e.code} | ${e.message}');
           if (!mounted) return;
           setState(() {
             _sending = false;

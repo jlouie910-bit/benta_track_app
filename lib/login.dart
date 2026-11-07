@@ -51,7 +51,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ---------------- EMAIL LOGIN ----------------
-  Future<void> _handleLogin() async {
+   Future<void> _handleLogin() async {
     if (!_hasAcceptedTerms) {
       _showErrorSnackBar("Please accept the Terms and Conditions to continue.");
       return;
@@ -72,12 +72,27 @@ class _LoginScreenState extends State<LoginScreen> {
       final userCredential = await _authService.login(email, password);
 
       if (userCredential != null && userCredential.user != null && mounted) {
+        // NEW: add this account's email to the lookup index
+        final u = userCredential.user!;
+        final mail = u.email?.toLowerCase();
+        if (mail != null) {
+          try {
+            await FirebaseFirestore.instance
+                .collection('EmailIndex')
+                .doc(mail)
+                .set({'uid': u.uid});
+          } catch (_) {
+            // already indexed or offline; safe to ignore
+          }
+        }
+
         TextInput.finishAutofillContext();
         await _checkSetupAndNavigate(userCredential.user!.uid);
       } else if (mounted) {
         _showErrorSnackBar("Invalid email or password.");
       }
     } on FirebaseAuthException catch (e) {
+      // ...keep your existing catch blocks and finally exactly as they are
       if (!mounted) return;
 
       String errorMessage = "Login failed. Please try again.";

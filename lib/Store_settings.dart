@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'auth_service.dart';
+import 'phone_auth_helper.dart';
 
 class StoreSettingsScreen extends StatefulWidget {
   const StoreSettingsScreen({super.key});
@@ -12,6 +14,7 @@ class StoreSettingsScreen extends StatefulWidget {
 
 class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
   final User? user = FirebaseAuth.instance.currentUser;
+  final AuthService _authService = AuthService();
   bool _isLoading = false;
   String? _existingMpin;
 
@@ -43,11 +46,289 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
     } catch (e) {
       debugPrint("Error fetching settings: $e");
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // --- MPIN DIALOG (FOR SETUP AND CHANGE) ---
+  // ---------------------------------------------------------------------------
+  // FORGOT MPIN
+  // ---------------------------------------------------------------------------
+
+  /// Step 1: explain, then verify the owner (email code or SMS code),
+  /// Step 2: let them set a brand-new MPIN.
+  Future<void> _startForgotMpin() async {
+    final u = FirebaseAuth.instance.currentUser;
+    if (u == null) {
+      _showError("You're signed out. Please log in again.");
+      return;
+    }
+
+    final email = u.email;
+    final phone = u.phoneNumber;
+    final hasEmail = email != null && email.isNotEmpty;
+    final hasPhone = phone != null && phone.isNotEmpty;
+
+    if (!hasEmail && !hasPhone) {
+      _showError("No email or mobile number on this account to verify.");
+      return;
+    }
+
+    final target = hasEmail ? _maskEmail(email) : PhoneAuthHelper.formatMasked(phone!);
+    final via = hasEmail ? "email" : "mobile number";
+
+    // Confirmation dialog
+    final proceed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final bool isDark = Theme.of(ctx).brightness == Brightness.dark;
+        return AlertDialog(
+          backgroundColor: isDark ? darkCard : Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            "Forgot MPIN?",
+            style: TextStyle(
+                color: isDark ? Colors.white : navyBlue,
+                fontWeight: FontWeight.bold),
+          ),
+          content: Text(
+            "To confirm it's really you, we'll send a 6-digit code to your $via ($target). After that you can set a new MPIN.",
+            style: TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text("Cancel",
+                  style: TextStyle(color: isDark ? Colors.white54 : Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: navyBlue,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text("Send Code",
+                  style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (proceed != true || !mounted) return;
+
+    // Verify identity
+    final bool verified =
+        hasEmail ? await _verifyByEmailOtp(email) : await _verifyByPhone(u, phone!);
+
+    if (!verified || !mounted) return;
+
+    // Let them pick a new MPIN
+    _showResetMpinDialog();
+  }
+
+  /// Sends a 6-digit code to the account's email and asks for it.
+  Future<bool> _verifyByEmailOtp(String email) async {
+    setState(() => _isLoading = true);
+    bool sent = false;
+    try {
+      sent = await _authService
+          .sendOtpToEmail(email)
+          .timeout(const Duration(seconds: 20));
+    } catch (e) {
+      debugPrint("Forgot MPIN: could not send OTP: $e");
+    }
+    if (mounted) setState(() => _isLoading = false);
+
+    if (!sent) {
+      _showError(
+          "Couldn't send the verification code. Check your connection and try again.");
+      return false;
+    }
+    if (!mounted) return false;
+
+    final otpController = TextEditingController();
+    String? error;
+
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final bool isDark = Theme.of(ctx).brightness == Brightness.dark;
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) => AlertDialog(
+            backgroundColor: isDark ? darkCard : Colors.white,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text(
+              "Enter Verification Code",
+              style: TextStyle(
+                  color: isDark ? Colors.white : navyBlue,
+                  fontWeight: FontWeight.bold),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  "We sent a 6-digit code to ${_maskEmail(email)}.",
+                  style:
+                      TextStyle(color: isDark ? Colors.white70 : Colors.black87),
+                ),
+                const SizedBox(height: 15),
+                TextField(
+                  controller: otpController,
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  autofocus: true,
+                  textAlign: TextAlign.center,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  style: TextStyle(
+                    color: isDark ? Colors.white : Colors.black,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 8,
+                  ),
+                  decoration: InputDecoration(
+                    counterText: "",
+                    hintText: "000000",
+                    filled: true,
+                    fillColor: isDark ? Colors.black26 : Colors.grey[200],
+                    errorText: error,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  onChanged: (_) {
+                    if (error != null) setDialogState(() => error = null);
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text("Cancel",
+                    style: TextStyle(
+                        color: isDark ? Colors.white54 : Colors.grey)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: navyBlue,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () {
+                  if (otpController.text.length < 6) {
+                    setDialogState(() => error = "Enter all 6 digits.");
+                    return;
+                  }
+                  if (_authService.verifyOtp(otpController.text)) {
+                    Navigator.pop(ctx, true);
+                  } else {
+                    setDialogState(() => error = "Invalid code. Try again.");
+                  }
+                },
+                child: const Text("Verify",
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    return ok == true;
+  }
+
+  /// For phone-only accounts: re-verifies the same number by SMS.
+  Future<bool> _verifyByPhone(User u, String phone) async {
+    final credential = await PhoneAuthHelper.verifyWithSheet(context, phone);
+    final verifiedUser = credential?.user;
+    return verifiedUser != null && verifiedUser.uid == u.uid;
+  }
+
+  /// After verification: set a new MPIN (no current MPIN needed).
+  void _showResetMpinDialog() {
+    final newMpinController = TextEditingController();
+    final confirmMpinController = TextEditingController();
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        final bool isDark = Theme.of(ctx).brightness == Brightness.dark;
+        return AlertDialog(
+          backgroundColor: isDark ? darkCard : Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            "Set New MPIN",
+            style: TextStyle(
+                color: isDark ? Colors.white : navyBlue,
+                fontWeight: FontWeight.bold),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildDialogField(
+                  controller: newMpinController,
+                  label: "New 4-Digit MPIN",
+                  isDark: isDark,
+                ),
+                const SizedBox(height: 12),
+                _buildDialogField(
+                  controller: confirmMpinController,
+                  label: "Confirm New MPIN",
+                  isDark: isDark,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text("Cancel",
+                  style: TextStyle(color: isDark ? Colors.white54 : Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: navyBlue,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () async {
+                if (newMpinController.text.length != 4) {
+                  _showError("MPIN must be exactly 4 digits.");
+                  return;
+                }
+                if (newMpinController.text != confirmMpinController.text) {
+                  _showError("New MPINs do not match.");
+                  return;
+                }
+                await _updateMpinInFirebase(newMpinController.text);
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text("Save", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _maskEmail(String email) {
+    final parts = email.split('@');
+    if (parts.length != 2) return email;
+    final name = parts[0];
+    if (name.length <= 2) return '${name[0]}***@${parts[1]}';
+    return '${name.substring(0, 2)}***@${parts[1]}';
+  }
+
+  // ---------------------------------------------------------------------------
+  // MPIN DIALOG (FOR SETUP AND CHANGE)
+  // ---------------------------------------------------------------------------
   void _showMpinDialog() {
     final TextEditingController oldMpinController = TextEditingController();
     final TextEditingController newMpinController = TextEditingController();
@@ -80,8 +361,24 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
                     label: "Current MPIN",
                     isDark: isDark,
                   ),
+                  // NEW: Forgot MPIN link
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () {
+                        Navigator.pop(context); // close this dialog
+                        _startForgotMpin();
+                      },
+                      child: const Text(
+                        "Forgot MPIN?",
+                        style: TextStyle(
+                            color: Colors.blueAccent,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ),
                   const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 10),
+                    padding: EdgeInsets.only(bottom: 10),
                     child: Divider(color: Colors.white10),
                   ),
                 ],
@@ -147,6 +444,7 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
 
     final TextEditingController authController = TextEditingController();
     bool verified = false;
+    bool forgot = false;
 
     await showDialog(
       context: context,
@@ -179,6 +477,21 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
                   counterText: "",
                 ),
               ),
+              // NEW: Forgot MPIN link
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () {
+                    forgot = true;
+                    Navigator.pop(context);
+                  },
+                  child: const Text(
+                    "Forgot MPIN?",
+                    style: TextStyle(
+                        color: Colors.blueAccent, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
             ],
           ),
           actions: [
@@ -199,6 +512,12 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
         );
       },
     );
+
+    // They tapped "Forgot MPIN?" instead: run the reset flow, don't delete
+    if (forgot) {
+      if (mounted) _startForgotMpin();
+      return;
+    }
 
     if (!verified) return;
 
@@ -265,7 +584,7 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
     } catch (e) {
       _showError("Update failed: $e");
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

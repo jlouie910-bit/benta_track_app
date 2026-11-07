@@ -1,9 +1,12 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'auth_service.dart';
 import 'terms_conditions.dart';
+import 'Navigation.dart';
 import 'WelcomeSetupScreen.dart';
 import 'phone_auth_helper.dart';
 
@@ -58,14 +61,25 @@ class _SignUpScreenState extends State<SignUpScreen> {
   // ---------------------------------------------------------------------------
 
   /// Checks the 'EmailIndex' collection (document ID = lowercase email).
-  /// Only a single email can be looked up at a time and no other user data
-  /// is exposed.
+  /// If the lookup fails or times out, we return false so sign-up never hangs;
+  /// the OTP step still catches duplicates via 'email-already-in-use'.
   Future<bool> _emailAlreadyExists(String email) async {
-    final doc = await FirebaseFirestore.instance
-        .collection('EmailIndex')
-        .doc(email.toLowerCase())
-        .get();
-    return doc.exists;
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('EmailIndex')
+          .doc(email.toLowerCase())
+          .get(const GetOptions(source: Source.server)) // never use stale cache
+          .timeout(const Duration(seconds: 8));
+      debugPrint('EmailIndex lookup: id="${email.toLowerCase()}" exists=${doc.exists}');
+      return doc.exists;
+    } catch (e) {
+      debugPrint('EmailIndex check failed: $e');
+      // Debug builds only: tell the developer why the early popup didn't run
+      if (kDebugMode && mounted) {
+        _showSnackBar("Email check failed: $e", Colors.orange);
+      }
+      return false;
+    }
   }
 
   /// Warning popup shown when the email / number is already registered.
@@ -265,11 +279,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             'createdAt': FieldValue.serverTimestamp(),
                           }, SetOptions(merge: true));
 
-                          // 3. Register the email in the lookup index
-                          await FirebaseFirestore.instance
-                              .collection('EmailIndex')
-                              .doc(email.toLowerCase())
-                              .set({'uid': user.uid});
+                          // 3. Register the email in the lookup index.
+                          // Failure here must not break an otherwise
+                          // successful sign-up.
+                          try {
+                            await FirebaseFirestore.instance
+                                .collection('EmailIndex')
+                                .doc(email.toLowerCase())
+                                .set({'uid': user.uid});
+                          } catch (e) {
+                            debugPrint('EmailIndex write failed: $e');
+                          }
                         }
 
                         if (mounted) {
@@ -296,7 +316,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         }
                       } catch (e) {
                         // Fallback in case AuthService wraps the exception
-                        if (e.toString().contains('email-already-in-use')) {
+                        final msg = e.toString().toLowerCase();
+        if (msg.contains('email-already-in-use') ||
+            msg.contains('already registered') ||
+            msg.contains('already in use')) {
                           if (mounted) {
                             Navigator.of(context).pop();
                             _showAccountExistsDialog(email);
@@ -373,7 +396,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
         return; // finally block resets _isLoading
       }
 
-      bool isSent = await _authService.sendOtpToEmail(email);
+      bool isSent = await _authService
+          .sendOtpToEmail(email)
+          .timeout(const Duration(seconds: 20));
 
       if (isSent) {
         if (mounted) {
@@ -384,6 +409,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
         }
       } else {
         _showSnackBar("Failed to send verification email.", Colors.redAccent);
+      }
+    } on TimeoutException {
+      if (mounted) {
+        _showSnackBar(
+            "Request timed out. Please check your connection and try again.",
+            Colors.redAccent);
       }
     } catch (e) {
       if (mounted) {
@@ -416,7 +447,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
     try {
       final userRef =
           FirebaseFirestore.instance.collection('Users').doc(user.uid);
-      final userDoc = await userRef.get();
+      final userDoc =
+          await userRef.get().timeout(const Duration(seconds: 10));
 
       if (userDoc.exists) {
         // Phone auth signs existing users in automatically, so this number

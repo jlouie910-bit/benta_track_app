@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'Camera.dart'; // Ensure this points to your camera scanner file
+import 'barcode_directory_service.dart';
 
 class AddItemScreen extends StatefulWidget {
   final Map<String, dynamic>? initialData;
@@ -173,58 +174,160 @@ class _AddItemScreenState extends State<AddItemScreen> {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // SCAN + AUTO-FILL
+  // Order of lookup for a scanned barcode:
+  //   1. The user's OWN inventory   -> fills everything (name, category, prices)
+  //   2. The shared barcodeDirectory -> fills ONLY item name + category
+  //   3. Unknown barcode             -> just keeps the barcode
+  // ---------------------------------------------------------------------------
   Future<void> _scanAndAutoFill() async {
-    final scannedResult = await Navigator.push(
+    // Camera.dart returns a Map: {source: 'barcode', barcode: '...'} or
+    // {source: 'ai', itemName, category, imagePath, ...}.
+    // (Older versions returned a plain String, so that is still accepted.)
+    final scanned = await Navigator.push<dynamic>(
       context,
       MaterialPageRoute(builder: (context) => const CameraScreen()),
     );
 
-    if (scannedResult != null && scannedResult is String && mounted) {
+    if (scanned == null || !mounted) return;
+
+    // AI photo result: no barcode, so fill what the AI recognised
+    if (scanned is Map && scanned['source'] == 'ai') {
+      _applyAiResult(Map<String, dynamic>.from(scanned));
+      return;
+    }
+
+    final String scannedResult =
+        (scanned is Map ? (scanned['barcode'] ?? '') : scanned)
+            .toString()
+            .trim();
+    if (scannedResult.isEmpty) return;
+
+    setState(() => _barcodeController.text = scannedResult);
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // ── Step 1: Check the user's OWN inventory for this barcode ──
+    final ownQuery = await FirebaseFirestore.instance
+        .collection('Inventory')
+        .where('userId', isEqualTo: user.uid)
+        .where('barcode', isEqualTo: scannedResult)
+        .limit(1)
+        .get();
+
+    if (!mounted) return;
+
+    if (ownQuery.docs.isNotEmpty) {
+      // Full auto-fill including price, cost, pieces
+      final existingData = ownQuery.docs.first.data();
+      _applyExistingItemData(existingData);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Auto-filled from your inventory!"),
+          backgroundColor: Colors.green,
+        ),
+      );
+      return;
+    }
+
+    // ── Step 2: Check the shared global barcode directory ─────────
+    // Another user may have already catalogued this barcode.
+    // We auto-fill ONLY Item Name + Category — the user still enters
+    // Stock, Cost, Pieces/Pack and Selling Price themselves.
+    final directoryResult = await BarcodeDirectoryService.lookup(scannedResult);
+
+    if (!mounted) return;
+
+    if (directoryResult != null) {
       setState(() {
-        _barcodeController.text = scannedResult;
-      });
-
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        final query = await FirebaseFirestore.instance
-            .collection('Inventory')
-            .where('userId', isEqualTo: user.uid)
-            .where('barcode', isEqualTo: scannedResult)
-            .get();
-
-        if (query.docs.isNotEmpty) {
-          final existingData = query.docs.first.data();
-          setState(() {
-            _itemNameController.text = existingData['itemName'] ?? '';
-            String matchedCat = existingData['category'] ?? _selectedCategory;
-            if (_categories.contains(matchedCat)) {
-              _selectedCategory = matchedCat;
-            } else {
-              _selectedCategory = 'Others';
-              _customCategoryController.text = matchedCat;
-            }
-            _sellingPriceController.text = (existingData['price'] ?? '').toString();
-            
-            int pieces = (existingData['piecesPerPack'] ?? 1).toInt();
-            _isTingiMode = pieces > 1;
-            _piecesPerPackController.text = pieces.toString();
-            
-            if (_isTingiMode) {
-              _packCostController.text = (existingData['totalPackCost'] ?? '').toString();
-            } else {
-              _unitCostController.text = (existingData['cost'] ?? '').toString();
-            }
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Existing item details auto-filled from barcode!"), backgroundColor: Colors.green),
-          );
+        _itemNameController.text = directoryResult.itemName;
+        final cat = directoryResult.category;
+        if (_categories.contains(cat)) {
+          _selectedCategory = cat;
+          _customCategoryController.clear();
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Barcode scanned: $scannedResult. Fill in the remaining details."), backgroundColor: navyBlue),
-          );
+          _selectedCategory = 'Others';
+          _customCategoryController.text = cat;
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Nahanap sa community database: ${directoryResult.itemName}. "
+            "I-fill na lang ang Stock, Cost, at Presyo.",
+          ),
+          backgroundColor: const Color(0xFF1E3A5F),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
+    // ── Step 3: Truly unknown barcode ─────────────────────────────
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Barcode scanned: $scannedResult. I-fill ang detalye ng item."),
+        backgroundColor: const Color(0xFF1E3A5F),
+      ),
+    );
+  }
+
+  /// Fills the form from an AI photo scan (name, category, photo).
+  void _applyAiResult(Map<String, dynamic> ai) {
+    final name = (ai['itemName'] ?? '').toString().trim();
+    final cat = (ai['category'] ?? '').toString().trim();
+    final path = (ai['imagePath'] ?? '').toString();
+
+    setState(() {
+      if (name.isNotEmpty) _itemNameController.text = name;
+      if (cat.isNotEmpty) {
+        if (_categories.contains(cat)) {
+          _selectedCategory = cat;
+          _customCategoryController.clear();
+        } else {
+          _selectedCategory = 'Others';
+          _customCategoryController.text = cat;
         }
       }
-    }
+      if (path.isNotEmpty) _imagePath = path;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(name.isEmpty
+            ? "AI scan done. I-fill ang detalye ng item."
+            : "AI detected: $name. Pakicheck ang detalye."),
+        backgroundColor: const Color(0xFF1E3A5F),
+      ),
+    );
+  }
+
+  /// Applies a full data map from the user's own inventory
+  /// (all fields: name, category, price, cost, pieces).
+  void _applyExistingItemData(Map<String, dynamic> data) {
+    setState(() {
+      _itemNameController.text = data['itemName'] ?? '';
+      final cat = data['category'] ?? _selectedCategory;
+      if (_categories.contains(cat)) {
+        _selectedCategory = cat;
+      } else {
+        _selectedCategory = 'Others';
+        _customCategoryController.text = cat;
+      }
+      _sellingPriceController.text = (data['price'] ?? '').toString();
+
+      final int pieces = (data['piecesPerPack'] ?? 1).toInt();
+      _isTingiMode = pieces > 1;
+      _piecesPerPackController.text = pieces.toString();
+
+      if (_isTingiMode) {
+        _packCostController.text = (data['totalPackCost'] ?? '').toString();
+      } else {
+        _unitCostController.text = (data['cost'] ?? '').toString();
+      }
+    });
   }
 
   Future<void> _saveItem() async {
@@ -357,6 +460,21 @@ class _AddItemScreenState extends State<AddItemScreen> {
         itemData['createdAt'] = FieldValue.serverTimestamp();
         itemData['totalSold'] = 0;
         await FirebaseFirestore.instance.collection('Inventory').add(itemData);
+      }
+
+      // ── Contribute to shared barcode directory ───────────────────
+      // Silently share the barcode→name mapping so other users
+      // benefit when they scan the same product.
+      // Only contributes if a real barcode was entered (not empty,
+      // not an AI-returned product name string).
+      if (barcode.isNotEmpty) {
+        BarcodeDirectoryService.contribute(
+          barcode: barcode,
+          itemName: itemName,
+          category: finalCategory,
+        );
+        // Clear cache so a re-scan of this barcode returns fresh data.
+        BarcodeDirectoryService.clearCache(barcode);
       }
 
       if (!mounted) return;

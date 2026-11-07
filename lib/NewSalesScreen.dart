@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'Camera.dart';
 import 'add_items_screen.dart';
+import 'barcode_directory_service.dart';
 
 class NewSalesScreen extends StatefulWidget {
   const NewSalesScreen({super.key});
@@ -44,63 +45,68 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
   }
 
   void _addItemToCart({
-    required String id,
-    required String name,
-    required double piecePrice,
-    required double pieceCost,
-    required int stock,
-    required int quantityToAdd,
-    required int piecesPerPack,
-    bool isSellingAsPack = false,
-  }) {
-    if (stock <= 0 || quantityToAdd <= 0) return;
+  required String id,
+  required String name,
+  required double piecePrice,
+  required double pieceCost,
+  required int stock,
+  required int quantityToAdd,
+  required int piecesPerPack,
+  bool isSellingAsPack = false,
+}) {
+  if (stock <= 0) {
+    _showSnackBar("$name is out of stock.", isError: true);
+    return;
+  }
+  if (quantityToAdd <= 0) return;
 
-    setState(() {
-      int index = _cartItems.indexWhere((item) => item['id'] == id && item['isSellingAsPack'] == isSellingAsPack);
+  setState(() {
+    int index = _cartItems.indexWhere(
+        (item) => item['id'] == id && item['isSellingAsPack'] == isSellingAsPack);
 
-      int requiredStockUnits = isSellingAsPack ? (quantityToAdd * piecesPerPack) : quantityToAdd;
+    int requiredStockUnits = isSellingAsPack ? (quantityToAdd * piecesPerPack) : quantityToAdd;
 
-      if (index != -1) {
-        int existingQty = _cartItems[index]['quantity'];
-        int newQty = existingQty + quantityToAdd;
-        int requiredNewUnits = isSellingAsPack ? (newQty * piecesPerPack) : newQty;
+    if (index != -1) {
+      int existingQty = _cartItems[index]['quantity'];
+      int newQty = existingQty + quantityToAdd;
+      int requiredNewUnits = isSellingAsPack ? (newQty * piecesPerPack) : newQty;
 
-        if (requiredNewUnits <= stock) {
-          _cartItems[index]['quantity'] = newQty;
-        } else {
-          _cartItems[index]['quantity'] = isSellingAsPack ? (stock ~/ piecesPerPack) : stock;
-        }
+      if (requiredNewUnits <= stock) {
+        _cartItems[index]['quantity'] = newQty;
       } else {
-        if (requiredStockUnits <= stock) {
+        _cartItems[index]['quantity'] = isSellingAsPack ? (stock ~/ piecesPerPack) : stock;
+      }
+    } else {
+      if (requiredStockUnits <= stock) {
+        _cartItems.add({
+          'id': id,
+          'name': name,
+          'price': piecePrice,
+          'cost': pieceCost,
+          'quantity': quantityToAdd,
+          'maxStock': stock,
+          'piecesPerPack': piecesPerPack,
+          'isSellingAsPack': isSellingAsPack,
+        });
+      } else {
+        int maxAllowed = isSellingAsPack ? (stock ~/ piecesPerPack) : stock;
+        if (maxAllowed > 0) {
           _cartItems.add({
             'id': id,
             'name': name,
             'price': piecePrice,
             'cost': pieceCost,
-            'quantity': quantityToAdd,
+            'quantity': maxAllowed,
             'maxStock': stock,
             'piecesPerPack': piecesPerPack,
             'isSellingAsPack': isSellingAsPack,
           });
-        } else {
-          int maxAllowed = isSellingAsPack ? (stock ~/ piecesPerPack) : stock;
-          if (maxAllowed > 0) {
-            _cartItems.add({
-              'id': id,
-              'name': name,
-              'price': piecePrice,
-              'cost': pieceCost,
-              'quantity': maxAllowed,
-              'maxStock': stock,
-              'piecesPerPack': piecesPerPack,
-              'isSellingAsPack': isSellingAsPack,
-            });
-          }
         }
       }
-      _calculateTotal();
-    });
-  }
+    }
+    _calculateTotal();
+  });
+}
 
   Future<void> _verifyAndNavigateToAddItemWithData(Map<String, dynamic> initialData) async {
     if (user == null) return;
@@ -562,125 +568,184 @@ class _NewSalesScreenState extends State<NewSalesScreen> {
     );
   }
 
-  // ── UPGRADED: handles both barcode scans AND AI vision results ──
-  void _openCameraScanner() async {
-    final scanResult = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(builder: (context) => const CameraScreen()),
-    );
+  // ── Handles both barcode scans AND AI vision results ──
+  // Camera.dart returns a Map:
+  //   barcode scan → {source: 'barcode', barcode: '...'}
+  //   AI scan      → {source: 'ai', itemName: '...', ...}
+void _openCameraScanner() async {
+  if (user == null) return;
+  final firestore = FirebaseFirestore.instance;
 
-    if (scanResult == null || scanResult.trim().isEmpty || !mounted) return;
-
-    final firestore = FirebaseFirestore.instance;
-
-    // ── Step 1: Try barcode match (exact, global) ──────────────
-    var querySnapshot = await firestore
-    .collection('Inventory')
-    .where('userId', isEqualTo: user?.uid)
-    .where('barcode', isEqualTo: scanResult)
-    .limit(1)
-    .get();
-
-    if (querySnapshot.docs.isNotEmpty) {
-      final doc = querySnapshot.docs.first;
-      final data = doc.data();
-      _addItemToCart(
-        id: doc.id,
-        name: data['itemName'] ?? 'Unknown Item',
-        piecePrice: (data['price'] as num?)?.toDouble() ?? 0.0,
-        pieceCost: (data['cost'] as num?)?.toDouble() ?? 0.0,
-        stock: (data['stock'] as num?)?.toInt() ?? 0,
-        quantityToAdd: 1,
-        piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
-        isSellingAsPack: false,
-      );
-      _showSnackBar("Auto-filled: ${data['itemName']}");
-      return;
-    }
-
-    // ── Step 2: Fetch user's inventory for fuzzy name match ────
-    // (handles AI vision results like "Marlboro Red Softpack" → "Marlboro Red")
-    final allDocsSnap = await firestore
+  // Load this store's items once (used as the AI hint and for matching)
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> inventoryDocs = [];
+  try {
+    final snap = await firestore
         .collection('Inventory')
-        .where('userId', isEqualTo: user?.uid)
+        .where('userId', isEqualTo: user!.uid)
         .get();
-
-    if (allDocsSnap.docs.isEmpty) {
-      _handleUnknownScan(scanResult);
-      return;
-    }
-
-    final allItems = allDocsSnap.docs
-        .map((doc) => <String, dynamic>{'_docId': doc.id, ...doc.data()})
-        .toList();
-
-    final matched = _fuzzyMatchItem(scanResult, allItems);
-
-    if (matched != null) {
-      _addItemToCart(
-        id: matched['_docId'] as String,
-        name: matched['itemName'] ?? 'Unknown Item',
-        piecePrice: (matched['price'] as num?)?.toDouble() ?? 0.0,
-        pieceCost: (matched['cost'] as num?)?.toDouble() ?? 0.0,
-        stock: (matched['stock'] as num?)?.toInt() ?? 0,
-        quantityToAdd: 1,
-        piecesPerPack: (matched['piecesPerPack'] as num?)?.toInt() ?? 1,
-        isSellingAsPack: false,
-      );
-      _showSnackBar("Auto-filled: ${matched['itemName']}");
-      return;
-    }
-
-    // ── Step 3: Nothing matched — prompt user ──────────────────
-    _handleUnknownScan(scanResult);
+    inventoryDocs = snap.docs;
+  } catch (e) {
+    _showSnackBar("Could not load inventory: $e", isError: true);
+    return;
   }
+
+  final knownNames = inventoryDocs
+      .map((d) => (d.data()['itemName'] ?? '').toString().trim())
+      .where((n) => n.isNotEmpty)
+      .toList();
+
+  if (!mounted) return;
+
+  final raw = await Navigator.push<dynamic>(
+    context,
+    MaterialPageRoute(builder: (context) => CameraScreen(knownItems: knownNames)),
+  );
+
+  if (raw == null || !mounted) return;
+
+  final bool isAi = raw is Map && raw['source'] == 'ai';
+  String scanResult = '';
+  if (raw is String) {
+    scanResult = raw;
+  } else if (raw is Map) {
+    scanResult = (isAi ? raw['itemName'] : raw['barcode'])?.toString() ?? '';
+  }
+  scanResult = scanResult.trim();
+  if (scanResult.isEmpty) return;
+
+  try {
+    // Barcode scans: exact barcode match first
+    if (!isAi) {
+      for (final doc in inventoryDocs) {
+        final data = doc.data();
+        final code = (data['barcode'] ?? '').toString().trim();
+        if (code.isNotEmpty && code == scanResult) {
+          _addMatchedDoc(doc.id, data);
+          return;
+        }
+      }
+    }
+
+    // Name match against Firebase itemName (AI scans and barcode fallback)
+    if (inventoryDocs.isNotEmpty) {
+      final allItems = inventoryDocs
+          .map((doc) => <String, dynamic>{'_docId': doc.id, ...doc.data()})
+          .toList();
+      final matched = _fuzzyMatchItem(scanResult, allItems);
+      if (matched != null) {
+        _addMatchedDoc(matched['_docId'] as String, matched);
+        return;
+      }
+    }
+
+    // AI scan with no match: just tell the user, do not add anything
+    if (isAi) {
+      _showSnackBar("'$scanResult' is not in your inventory.", isError: true);
+      return;
+    }
+
+    // Barcode scans only: community directory, then unknown barcode prompt
+    final looksLikeBarcode = RegExp(r'^[A-Za-z0-9\-]{4,20}$').hasMatch(scanResult);
+    if (looksLikeBarcode) {
+      final directoryResult = await BarcodeDirectoryService.lookup(scanResult);
+      if (directoryResult != null && mounted) {
+        _showSnackBar(
+          "Nakilala sa community DB: ${directoryResult.itemName}. "
+          "I-add muna sa iyong inventory.",
+        );
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => AddItemScreen(
+              initialData: {
+                'barcode': scanResult,
+                'itemName': directoryResult.itemName,
+                'category': directoryResult.category,
+              },
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    _handleUnknownScan(scanResult);
+  } catch (e) {
+    _showSnackBar("Scan lookup failed: $e", isError: true);
+  }
+}
+
+/// Adds one piece of a matched inventory item to the cart.
+void _addMatchedDoc(String docId, Map<String, dynamic> data) {
+  _addItemToCart(
+    id: docId,
+    name: data['itemName'] ?? 'Unknown Item',
+    piecePrice: (data['price'] as num?)?.toDouble() ?? 0.0,
+    pieceCost: (data['cost'] as num?)?.toDouble() ?? 0.0,
+    stock: (data['stock'] as num?)?.toInt() ?? 0,
+    quantityToAdd: 1,
+    piecesPerPack: (data['piecesPerPack'] as num?)?.toInt() ?? 1,
+    isSellingAsPack: false,
+  );
+  if ((data['stock'] as num?)?.toInt() != 0) {
+    _showSnackBar("Auto-filled: ${data['itemName']}");
+  }
+}
 
   /// Fuzzy match: exact → prefix → contains → word overlap.
   /// Returns the best matching inventory item or null.
-  Map<String, dynamic>? _fuzzyMatchItem(
-    String scanResult,
-    List<Map<String, dynamic>> items,
-  ) {
-    final query = scanResult.trim().toLowerCase();
-    String nameOf(Map<String, dynamic> item) =>
-        (item['itemName'] as String? ?? '').toLowerCase();
+  String _normName(String s) => s
+    .toLowerCase()
+    .replaceAll(RegExp(r'[^a-z0-9ñ ]+'), ' ')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
 
-    // 1. Exact
-    for (final item in items) {
-      if (nameOf(item) == query) return item;
-    }
-    // 2. Prefix (either direction)
-    for (final item in items) {
-      final n = nameOf(item);
-      if (n.startsWith(query) || query.startsWith(n)) return item;
-    }
-    // 3. Contains (either direction)
-    for (final item in items) {
-      final n = nameOf(item);
-      if (n.contains(query) || query.contains(n)) return item;
-    }
-    // 4. Word overlap — at least 1 significant word (≥3 chars)
-    final queryWords = query
-        .split(RegExp(r'\s+'))
-        .where((w) => w.length >= 3)
-        .toSet();
-    if (queryWords.isEmpty) return null;
+/// Matches a scanned/AI name to an inventory item.
+/// Ignores case, punctuation and spacing ("LuckyMe" == "Lucky Me"),
+/// and never mixes up different sizes ("60g" vs "80g").
+Map<String, dynamic>? _fuzzyMatchItem(
+  String scanResult,
+  List<Map<String, dynamic>> items,
+) {
+  final query = _normName(scanResult);
+  if (query.isEmpty) return null;
+  final queryCompact = query.replaceAll(' ', '');
+  String nameOf(Map<String, dynamic> i) => _normName((i['itemName'] ?? '').toString());
 
-    Map<String, dynamic>? best;
-    int bestScore = 0;
-    for (final item in items) {
-      final nameWords = nameOf(item)
-          .split(RegExp(r'\s+'))
-          .where((w) => w.length >= 3)
-          .toSet();
-      final overlap = queryWords.intersection(nameWords).length;
-      if (overlap > bestScore) {
-        bestScore = overlap;
-        best = item;
-      }
-    }
-    return bestScore >= 1 ? best : null;
+  // 1. Exact match (ignoring case, punctuation and spaces)
+  for (final item in items) {
+    final n = nameOf(item);
+    if (n.isEmpty) continue;
+    if (n == query || n.replaceAll(' ', '') == queryCompact) return item;
   }
+
+  // 2. Token similarity. Size tokens like "60g" must agree.
+  final qTokens = query.split(' ').where((w) => w.length >= 2).toSet();
+  final sizeRe = RegExp(r'^\d+(g|kg|ml|l|oz|pcs)$');
+  final qSize = qTokens.where(sizeRe.hasMatch).toSet();
+
+  Map<String, dynamic>? best;
+  double bestScore = 0;
+  for (final item in items) {
+    final nTokens = nameOf(item).split(' ').where((w) => w.length >= 2).toSet();
+    if (nTokens.isEmpty) continue;
+
+    final nSize = nTokens.where(sizeRe.hasMatch).toSet();
+    if (qSize.isNotEmpty && nSize.isNotEmpty && qSize.intersection(nSize).isEmpty) {
+      continue; // different size = different product
+    }
+
+    final inter = qTokens.intersection(nTokens).length;
+    if (inter == 0) continue;
+    final score = inter / qTokens.union(nTokens).length;
+    if (score > bestScore) {
+      bestScore = score;
+      best = item;
+    }
+  }
+  return bestScore >= 0.5 ? best : null;
+}
 
   /// Called when scan result doesn't match anything in inventory.
   void _handleUnknownScan(String scanResult) {

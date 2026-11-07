@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'add_items_screen.dart';
+import 'Camera.dart';
+import 'product_catalog.dart';
 
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
@@ -13,6 +15,9 @@ class InventoryScreen extends StatefulWidget {
 }
 
 class _InventoryScreenState extends State<InventoryScreen> {
+  // Only two stock states are used now: In Stock and Low Stock
+  static const List<String> _statusTabs = ['All Items', 'In Stock', 'Low Stock'];
+
   String _selectedStatusTab = 'All Items';
   String _selectedCategory = 'All Categories';
 
@@ -48,38 +53,36 @@ class _InventoryScreenState extends State<InventoryScreen> {
         .snapshots();
   }
 
-  /// Calculates dynamic status based on sales velocity
+  // Low Stock when the remaining stock would be sold out within this many days
+  static const double _lowStockDays = 7.0;
+
+  // Items with no sales yet are only flagged when almost gone
+  static const int _noSalesMinUnits = 3;
+
+  /// Status is based on how fast the item sells:
+  /// days left = current stock / units sold per day.
+  /// Slow sellers stay 'In Stock' even with few units left.
+  /// Returns only 'Low Stock' or 'In Stock'.
   String _calculateDynamicStatus(Map<String, dynamic> data) {
     int currentStock = (data['stock'] as num?)?.toInt() ?? 0;
-    if (currentStock <= 0) return 'Critical';
+    if (currentStock <= 0) return 'Low Stock'; // sold out, needs restocking
 
     int totalSold = (data['totalSold'] as num?)?.toInt() ?? 0;
     Timestamp? createdAt = data['createdAt'] as Timestamp?;
 
-    if (totalSold == 0 || createdAt == null) {
-      if (currentStock <= 5) return 'Critical';
-      if (currentStock <= 10) return 'Low Stock';
-      return 'In Stock';
+    // No sales history yet: we can't measure speed, so only flag when
+    // the item is almost gone.
+    if (totalSold <= 0 || createdAt == null) {
+      return currentStock <= _noSalesMinUnits ? 'Low Stock' : 'In Stock';
     }
 
-    DateTime createdDate = createdAt.toDate();
-    int daysActive = DateTime.now().difference(createdDate).inDays;
+    int daysActive = DateTime.now().difference(createdAt.toDate()).inDays;
     if (daysActive < 1) daysActive = 1;
 
     double salesVelocityPerDay = totalSold / daysActive;
     double estimatedDaysRemaining = currentStock / salesVelocityPerDay;
 
-    if (salesVelocityPerDay >= 3.0 && estimatedDaysRemaining <= 3.0) {
-      return 'Critical';
-    } else if (salesVelocityPerDay >= 1.5 && estimatedDaysRemaining <= 7.0) {
-      return 'Low Stock';
-    } else if (currentStock <= 5) {
-      return 'Critical';
-    } else if (currentStock <= 10) {
-      return 'Low Stock';
-    }
-
-    return 'In Stock';
+    return estimatedDaysRemaining <= _lowStockDays ? 'Low Stock' : 'In Stock';
   }
 
   // --- SECURE MPIN VERIFICATION FOR RESTOCK / EDIT ---
@@ -290,7 +293,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   // --- SECURE MPIN VERIFICATION & CONTINUOUS ADD MODE ---
-  Future<void> _verifyAndAddNew() async {
+  // [initialData] pre-fills the FIRST Add Item screen (used by "Scan to Add").
+  Future<void> _verifyAndAddNew({Map<String, dynamic>? initialData}) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
@@ -376,11 +380,21 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
       if (isVerified && mounted) {
         bool addMore = true;
+        bool first = true;
         while (addMore && mounted) {
           await Navigator.push(
             context,
-            MaterialPageRoute(builder: (context) => const AddItemScreen()),
+            MaterialPageRoute(
+              builder: (context) => AddItemScreen(initialData: first ? initialData : null),
+            ),
           );
+
+          // Scanned a barcode and really saved it? Share name + category in the catalog.
+          final scannedBarcode = (initialData?['barcode'] ?? '').toString().trim();
+          if (first && scannedBarcode.isNotEmpty) {
+            await ProductCatalog.saveFromInventory(user.uid, scannedBarcode);
+          }
+          first = false;
 
           if (!mounted) break;
 
@@ -413,6 +427,130 @@ class _InventoryScreenState extends State<InventoryScreen> {
     } catch (e) {
       _showSnackBar("Error verifying MPIN: $e", isError: true);
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // SCAN TO ADD
+  //  • Item already in inventory  → opens Restock for it
+  //  • Barcode known in catalog   → Add Item pre-filled with the shared name
+  //  • New product                → Add Item pre-filled (or link to existing)
+  // ═══════════════════════════════════════════════════════════════
+  Future<void> _scanToAdd() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    List<Map<String, dynamic>> items = [];
+    try {
+      items = await ProductCatalog.loadInventory(user.uid);
+    } catch (_) {}
+    if (!mounted) return;
+
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CameraScreen(knownItems: ProductCatalog.namesForAI(items)),
+      ),
+    );
+    if (result == null || !mounted) return;
+
+    final bool isAi = result['source'] == 'ai';
+    final String scan =
+        ((isAi ? result['itemName'] : result['barcode']) ?? '').toString().trim();
+    if (scan.isEmpty) return;
+
+    // ── Is it already in the inventory? ────────────────────────
+    Map<String, dynamic>? existing;
+    if (isAi) {
+      existing = ProductCatalog.fuzzyMatch(scan, items);
+      if (existing != null && !ProductCatalog.isExactMatch(existing, scan)) {
+        final ok = await ProductCatalog.confirmMatch(
+            context, scan, ProductCatalog.nameOf(existing));
+        if (!mounted) return;
+        if (ok == null) return;
+        if (ok == true) {
+          await ProductCatalog.addAlias(existing['_docId'] as String, scan);
+        } else {
+          existing = null;
+        }
+      }
+    } else {
+      existing = ProductCatalog.findByBarcode(items, scan);
+    }
+
+    if (existing != null) {
+      _showSnackBar('Already in inventory. Opening restock.');
+      _openRestockFor(existing);
+      return;
+    }
+
+    // ── Not found: catalog name (barcode only) ─────────────────
+    String? suggested;
+    bool fromCatalog = false;
+    if (!isAi) {
+      final cat = await ProductCatalog.lookup(scan);
+      final n = (cat?['itemName'] ?? '').toString().trim();
+      if (n.isNotEmpty) {
+        suggested = n;
+        fromCatalog = true;
+      }
+    }
+    if (!mounted) return;
+
+    final choice = await ProductCatalog.showUnknownDialog(
+      context,
+      barcode: isAi ? null : scan,
+      aiName: isAi ? scan : null,
+      suggestedName: suggested,
+      fromCatalog: fromCatalog,
+    );
+    if (choice == null || !mounted) return;
+
+    // ── Link to an item that already exists ────────────────────
+    if (choice.action == 'link') {
+      if (items.isEmpty) {
+        _showSnackBar('No items in your inventory yet.', isError: true);
+        return;
+      }
+      final picked = await ProductCatalog.pickItem(context, items);
+      if (picked == null || !mounted) return;
+
+      final id = picked['_docId'] as String;
+      if (isAi) {
+        await ProductCatalog.addAlias(id, scan);
+      } else {
+        await ProductCatalog.attachBarcode(id, scan);
+        picked['barcode'] = scan;
+      }
+      _showSnackBar('Linked. Opening restock.');
+      _openRestockFor(picked);
+      return;
+    }
+
+    // ── Add as a new item ──────────────────────────────────────
+    final name = choice.name.isNotEmpty ? choice.name : (isAi ? scan : 'New Item');
+    final prefill = <String, dynamic>{
+      'itemName': name,
+      if (!isAi) 'barcode': scan,
+    };
+
+    final category = (result['category'] ?? '').toString();
+    if (isAi && category.isNotEmpty) prefill['category'] = category;
+
+    // The AI price is only a rough guess: the owner confirms it in the form.
+    final price = double.tryParse(
+        (result['estimatedPrice'] ?? '').toString().replaceAll(RegExp(r'[^0-9.]'), ''));
+    if (isAi && price != null && price > 0) prefill['price'] = price;
+
+    final photo = (result['imagePath'] ?? '').toString();
+    if (isAi && photo.isNotEmpty) prefill['imagePath'] = photo;
+
+    await _verifyAndAddNew(initialData: prefill);
+  }
+
+  void _openRestockFor(Map<String, dynamic> item) {
+    final data = Map<String, dynamic>.from(item);
+    final id = data.remove('_docId') as String;
+    _verifyAndRestock(data, id);
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
@@ -460,6 +598,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // Safety: if an old tab (e.g. 'Critical') is still selected, reset it
+    if (!_statusTabs.contains(_selectedStatusTab)) {
+      _selectedStatusTab = 'All Items';
+    }
 
     return Scaffold(
       backgroundColor: isDark ? fbDarkBg : navyBlue,
@@ -511,7 +654,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
-                    children: ['All Items', 'In Stock', 'Low Stock', 'Critical'].map((tab) {
+                    children: _statusTabs.map((tab) {
                       bool isSelected = _selectedStatusTab == tab;
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -585,7 +728,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
                     final docs = snapshot.data!.docs.where((doc) {
                       final data = doc.data() as Map<String, dynamic>;
-                     
+
                       if (_selectedCategory != 'All Categories') {
                         if ((data['category'] ?? '') != _selectedCategory) {
                           return false;
@@ -607,7 +750,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     }
 
                     return ListView.builder(
-                      padding: const EdgeInsets.all(15),
+                      padding: const EdgeInsets.fromLTRB(15, 15, 15, 150), // room for the two buttons
                       itemCount: docs.length,
                       itemBuilder: (context, index) {
                         var doc = docs[index];
@@ -635,7 +778,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                             });
                           },
                           child: Card(
-                            color: isSelected 
+                            color: isSelected
                                 ? (isDark ? Colors.teal.shade900.withValues(alpha: 0.4) : Colors.teal.shade50)
                                 : (isDark ? fbCardBg : Colors.white),
                             margin: const EdgeInsets.only(bottom: 15),
@@ -643,7 +786,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                               borderRadius: BorderRadius.circular(15),
                               side: isSelected
                                   ? BorderSide(color: tealAccent, width: 2)
-                                  : (effectiveStatus == 'Critical' ? const BorderSide(color: Colors.redAccent, width: 1.5) : BorderSide.none),
+                                  : BorderSide.none,
                             ),
                             child: Column(
                               children: [
@@ -670,17 +813,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                         _buildProductThumbnail(imagePath, statusIcon),
                                       ],
                                     ),
-                                    title: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            data['itemName'] ?? 'Product',
-                                            style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black),
-                                          ),
-                                        ),
-                                        if (effectiveStatus == 'Critical' && !isOutOfStock)
-                                          const Text("FAST SELLER (CRITICAL)", style: TextStyle(color: Colors.red, fontSize: 10, fontWeight: FontWeight.bold)),
-                                      ],
+                                    title: Text(
+                                      data['itemName'] ?? 'Product',
+                                      style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black),
                                     ),
                                     subtitle: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -688,9 +823,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                         Text("Stock: $currentStock | ${data['category'] ?? 'General'}", style: TextStyle(color: isDark ? fbTextGrey : Colors.black54)),
                                         Text("Barcode: ${data['barcode'] ?? 'N/A'}", style: TextStyle(color: isDark ? tealAccent : navyBlue, fontSize: 11, fontWeight: FontWeight.w500)),
                                         Text(
-                                          "Capital/Unit: ₱${cost.toStringAsFixed(2)}", 
+                                          "Capital/Unit: ₱${cost.toStringAsFixed(2)}",
                                           style: TextStyle(
-                                            color: isDark ? fbTextGrey : Colors.black87, // Standard color, no longer forces red
+                                            color: isDark ? fbTextGrey : Colors.black87,
                                             fontSize: 12,
                                           ),
                                         ),
@@ -718,26 +853,14 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                   child: Row(
                                     mainAxisAlignment: MainAxisAlignment.start,
                                     children: [
-                                      Container(
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(8),
-                                          boxShadow: effectiveStatus == 'Critical' ? [
-                                            BoxShadow(
-                                              color: Colors.redAccent.withValues(alpha: 0.7),
-                                              blurRadius: 12,
-                                              spreadRadius: 1,
-                                            ),
-                                          ] : [],
-                                        ),
-                                        child: ElevatedButton.icon(
-                                          onPressed: () => _verifyAndRestock(data, doc.id),
-                                          icon: const Icon(Icons.add_business, size: 16, color: Colors.white),
-                                          label: const Text("RESTOCK", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: effectiveStatus == 'Critical' ? Colors.redAccent : tealAccent,
-                                            elevation: effectiveStatus == 'Critical' ? 0 : 2,
-                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                                          ),
+                                      ElevatedButton.icon(
+                                        onPressed: () => _verifyAndRestock(data, doc.id),
+                                        icon: const Icon(Icons.add_business, size: 16, color: Colors.white),
+                                        label: const Text("RESTOCK", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: tealAccent,
+                                          elevation: 2,
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                         ),
                                       ),
                                     ],
@@ -756,17 +879,32 @@ class _InventoryScreenState extends State<InventoryScreen> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _verifyAndAddNew,
-        label: const Text("Add New", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-        icon: const Icon(Icons.add, color: Colors.white),
-        backgroundColor: tealAccent,
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'scanToAdd',
+            onPressed: _scanToAdd,
+            label: const Text("Scan to Add", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            icon: const Icon(Icons.camera_alt, color: Colors.white),
+            backgroundColor: navyBlue,
+          ),
+          const SizedBox(height: 10),
+          FloatingActionButton.extended(
+            heroTag: 'addNew',
+            onPressed: () => _verifyAndAddNew(),
+            label: const Text("Add New", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            icon: const Icon(Icons.add, color: Colors.white),
+            backgroundColor: tealAccent,
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildStatusIcon(String status) {
-    Color color = status == 'Critical' ? Colors.red : (status == 'Low Stock' ? Colors.orange : Colors.green);
+    Color color = status == 'Low Stock' ? Colors.orange : Colors.green;
     return CircleAvatar(backgroundColor: color.withValues(alpha: 0.1), child: Icon(Icons.inventory_2, color: color, size: 20));
   }
 }

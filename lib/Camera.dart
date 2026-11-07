@@ -1,15 +1,14 @@
-// ═══════════════════════════════════════════════════════════════
-// Camera.dart — BentaTrack AI Scanner (FIXED v3)
-// ═══════════════════════════════════════════════════════════════
-
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:camera/camera.dart' as cam;
 import 'ai_service.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 
 class CameraScreen extends StatefulWidget {
-  const CameraScreen({super.key});
+  /// Names of the store's own items (with aliases). The AI picks from these first.
+  final List<String> knownItems;
+  const CameraScreen({super.key, this.knownItems = const []});
 
   @override
   State<CameraScreen> createState() => _CameraScreenState();
@@ -19,6 +18,16 @@ class _CameraScreenState extends State<CameraScreen>
     with WidgetsBindingObserver {
   // ── Mode ──────────────────────────────────────────────────────
   bool _isAiMode = false;
+
+  // ── Closing guard ─────────────────────────────────────────────
+  bool _closing = false;
+
+  /// The ONLY place that closes this screen. Ignores any second call.
+  void _finish([Object? result]) {
+    if (_closing || !mounted) return;
+    _closing = true;
+    Navigator.of(context).pop(result);
+  }
 
   // ── Barcode mode ──────────────────────────────────────────────
   MobileScannerController? _barcodeController;
@@ -51,14 +60,14 @@ class _CameraScreenState extends State<CameraScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
       _barcodeController?.stop();
-    } else if (state == AppLifecycleState.resumed && !_isAiMode) {
+    } else if (state == AppLifecycleState.resumed && !_isAiMode && !_closing) {
       _barcodeController?.start();
     }
   }
 
   // ── Barcode mode ──────────────────────────────────────────────
   void _startBarcodeMode() {
-    _barcodeController = MobileScannerController(
+        _barcodeController = MobileScannerController(
       detectionSpeed: DetectionSpeed.normal,
       facing: CameraFacing.back,
       torchEnabled: false,
@@ -90,7 +99,7 @@ class _CameraScreenState extends State<CameraScreen>
       );
       _aiCameraController = cam.CameraController(
         backCamera,
-        cam.ResolutionPreset.high,
+        cam.ResolutionPreset.medium, // smaller upload, faster answer
         enableAudio: false,
       );
       await _aiCameraController!.initialize();
@@ -108,6 +117,7 @@ class _CameraScreenState extends State<CameraScreen>
 
   // ── Toggle ────────────────────────────────────────────────────
   Future<void> _toggleMode() async {
+    if (_closing) return;
     if (_isAiMode) {
       await _stopAiMode();
       _startBarcodeMode();
@@ -121,17 +131,24 @@ class _CameraScreenState extends State<CameraScreen>
 
   // ── Barcode detect ────────────────────────────────────────────
   void _onBarcodeDetect(BarcodeCapture capture) {
-    if (_barcodeScanned) return;
-    final barcode = capture.barcodes.firstOrNull;
-    if (barcode?.rawValue == null) return;
+    if (_barcodeScanned || _closing) return;
+    final value = capture.barcodes.firstOrNull?.rawValue;
+    if (value == null || value.isEmpty) return;
     _barcodeScanned = true;
-    Navigator.pop(context, barcode!.rawValue);
+    _barcodeController?.stop();
+    _finish({'source': 'barcode', 'barcode': value});
   }
 
   // ── AI capture + analyze ──────────────────────────────────────
   Future<void> _captureAndAnalyze() async {
     final ctrl = _aiCameraController;
-    if (ctrl == null || !ctrl.value.isInitialized || _isCapturing || _isAnalyzing) return;
+    if (ctrl == null ||
+        !ctrl.value.isInitialized ||
+        _isCapturing ||
+        _isAnalyzing ||
+        _closing) {
+      return;
+    }
 
     setState(() {
       _isCapturing = true;
@@ -142,46 +159,69 @@ class _CameraScreenState extends State<CameraScreen>
       final xFile = await ctrl.takePicture();
       final imageFile = File(xFile.path);
 
+      if (!mounted) return;
       setState(() {
         _isCapturing = false;
         _isAnalyzing = true;
       });
 
-      final result = await AIService.detectItemFromImage(imageFile);
-debugPrint('AI RESULT: $result');
+      final result = await AIService.detectItemFromImage(
+        imageFile,
+        knownItems: widget.knownItems,
+      );
+      debugPrint('AI RESULT: $result');
 
-if (result == null) {
-  if (mounted) {
-    setState(() {
-      _aiError = 'Walang sagot ang AI. Subukan ulit.';
-      _isAnalyzing = false;
-    });
-  }
-  return;
-}
+      if (!mounted || _closing) return;
 
-if (result['error'] != null) {
-  if (mounted) {
-    setState(() {
-      _aiError = AIService.friendlyError('Error:${result['error']}');
-      _isAnalyzing = false;
-    });
-  }
-  return;
-}
-
-final itemName = (result['itemName'] as String? ?? '').trim();
-      if (itemName.isEmpty) {
-        if (mounted) {
-          setState(() {
-            _aiError = 'Hindi nakilala ang produkto. Subukan ulit.';
-            _isAnalyzing = false;
-          });
-        }
+      if (result == null) {
+        setState(() {
+          _aiError = 'Walang sagot ang AI. Subukan ulit.';
+          _isAnalyzing = false;
+        });
         return;
       }
 
-      if (mounted) Navigator.pop(context, itemName);
+      if (result['error'] != null) {
+        setState(() {
+          _aiError = AIService.friendlyError('Error:${result['error']}');
+          _isAnalyzing = false;
+        });
+        return;
+      }
+
+      final itemName = (result['itemName'] as String? ?? '').trim();
+      if (itemName.isEmpty) {
+        setState(() {
+          _aiError = 'Hindi nakilala ang produkto. Subukan ulit.';
+          _isAnalyzing = false;
+        });
+        return;
+      }
+
+      final confidence = (result['confidence'] as num?)?.toDouble() ?? 0.0;
+      final matched = result['matchedExisting'] == true;
+
+      // Sure AND already in the store's list → no extra tap needed.
+      final sure = matched && confidence >= 0.85;
+      if (!sure) {
+        final ok = await _confirmDetection(itemName, confidence, matched);
+        if (!mounted || _closing) return;
+        if (ok != true) {
+          setState(() => _isAnalyzing = false); // retake
+          return;
+        }
+      }
+
+      final Map<String, dynamic> out = {
+        'source': 'ai',
+        'itemName': itemName,
+        'category': result['category'],
+        'estimatedPrice': result['estimatedPrice'],
+        'matchedExisting': matched,
+        'confidence': confidence,
+        'imagePath': xFile.path,
+      };
+      _finish(out);
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -191,6 +231,63 @@ final itemName = (result['itemName'] as String? ?? '').trim();
         });
       }
     }
+  }
+
+  Future<bool?> _confirmDetection(
+      String name, double confidence, bool matched) {
+    return showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: const Color(0xFF1E3A5F),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              matched ? 'Found in your inventory' : 'New product detected',
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              name,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Confidence: ${(confidence * 100).round()}%',
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white),
+                    child: const Text('Retake'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text('Use this'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ── Build ─────────────────────────────────────────────────────
@@ -220,7 +317,7 @@ final itemName = (result['itemName'] as String? ?? '').trim();
                     IconButton(
                       icon: const Icon(Icons.arrow_back_ios_new_rounded,
                           color: Colors.white),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => _finish(),
                     ),
                     Expanded(
                       child: Text(
@@ -237,7 +334,6 @@ final itemName = (result['itemName'] as String? ?? '').trim();
                       IconButton(
                         icon: const Icon(Icons.flashlight_on_rounded,
                             color: Colors.white),
-                        // FIXED: Null-safe invocation of toggleTorch
                         onPressed: () => _barcodeController?.toggleTorch(),
                       )
                     else
@@ -255,7 +351,8 @@ final itemName = (result['itemName'] as String? ?? '').trim();
             right: 0,
             child: SafeArea(
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.bottomCenter,
@@ -305,8 +402,8 @@ final itemName = (result['itemName'] as String? ?? '').trim();
                               height: 68,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
-                                border: Border.all(
-                                    color: Colors.white, width: 3),
+                                border:
+                                    Border.all(color: Colors.white, width: 3),
                                 color: (_isCapturing || _isAnalyzing)
                                     ? Colors.white.withValues(alpha: 0.15)
                                     : Colors.white.withValues(alpha: 0.08),
@@ -388,7 +485,8 @@ class _ScanFrameOverlay extends StatelessWidget {
         width: 260,
         height: 260,
         decoration: BoxDecoration(
-          border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 1),
+          border:
+              Border.all(color: Colors.white.withValues(alpha: 0.6), width: 1),
           borderRadius: BorderRadius.circular(16),
         ),
         child: const Stack(
@@ -396,7 +494,12 @@ class _ScanFrameOverlay extends StatelessWidget {
             _Corner(top: -1, left: -1, color: Colors.white),
             _Corner(top: -1, right: -1, color: Colors.white, flipH: true),
             _Corner(bottom: -1, left: -1, color: Colors.white, flipV: true),
-            _Corner(bottom: -1, right: -1, color: Colors.white, flipH: true, flipV: true),
+            _Corner(
+                bottom: -1,
+                right: -1,
+                color: Colors.white,
+                flipH: true,
+                flipV: true),
           ],
         ),
       ),
@@ -410,7 +513,10 @@ class _Corner extends StatelessWidget {
   final bool flipH, flipV;
 
   const _Corner({
-    this.top, this.bottom, this.left, this.right,
+    this.top,
+    this.bottom,
+    this.left,
+    this.right,
     required this.color,
     this.flipH = false,
     this.flipV = false,

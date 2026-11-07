@@ -904,47 +904,83 @@ class AIService {
   // ---------------------------------------------------------------------------
   // 1. Vision: identify an item from a photo
   // ---------------------------------------------------------------------------
-  static Future<Map<String, dynamic>?> detectItemFromImage(File imageFile) async {
-  const sysInstruct =
-      "You are an inventory scanner for a sari-sari store in the Philippines. "
-      "Look at the image and return ONLY a JSON object with keys: "
-      "itemName (specific product name and brand as printed on the package), "
-      "category (one of: Food Products & Staples, Snacks & Treats, Beverages, Personal Care & Hygiene, Household & Cleaning Supplies), "
-      "estimatedPrice (typical Philippine retail price in PHP as a numeric string, or empty string if unknown). "
-      "Do not guess a brand you cannot read.";
+// ═══════════════════════════════════════════════════════════════
+// In ai_service.dart, DELETE the whole old detectItemFromImage(...)
+// function (section "1. Vision") and paste this in its place.
+// Nothing else in ai_service.dart changes.
+// ═══════════════════════════════════════════════════════════════
 
-  try {
-    final bytes = await imageFile.readAsBytes();
-    final text = await _generate(
-      systemInstruction: sysInstruct,
-      parts: [
-        {'text': 'Identify this retail item and extract product details.'},
-        {
-          'inline_data': {
-            'mime_type': 'image/jpeg',
-            'data': base64Encode(bytes),
-          }
-        },
-      ],
-      jsonOutput: true,
-      temperature: 0.1,
-    );
-    if (text == null) return null;
+  // ---------------------------------------------------------------------------
+  // 1. Vision: identify an item from a photo
+  // ---------------------------------------------------------------------------
+  static Future<Map<String, dynamic>?> detectItemFromImage(
+    File imageFile, {
+    List<String> knownItems = const [],
+  }) async {
+    final known = knownItems.take(200).join('\n');
 
-    // Strip ```json fences in case the model adds them
-    final cleaned = text.replaceAll(RegExp(r'```json|```'), '').trim();
-    var decoded = jsonDecode(cleaned);
-    if (decoded is List && decoded.isNotEmpty) decoded = decoded.first;
-    if (decoded is Map) return Map<String, dynamic>.from(decoded);
-    return null;
-  } on AIException catch (e) {
-    debugPrint('Vision failed: $e');
-    return {'error': e.kind};
-  } catch (e) {
-    debugPrint('Vision failed: $e');
-    return {'error': 'OTHER'};
+    final sysInstruct =
+        "You are a product scanner for a sari-sari store in the Philippines. "
+        "The photo shows ONE product, usually a sachet, pack, can, bottle, or cigarette box. "
+        "Common brands: Lucky Me, Nissin, Piattos, Nova, Chippy, Oishi, Clover Chips, Jack n Jill, "
+        "Skyflakes, Fita, Cream-O, Hello, Ding Dong, Kopiko, Great Taste, Nescafe, Milo, Bear Brand, "
+        "Alaska, Birch Tree, Coca-Cola, Royal, Sprite, C2, Mountain Dew, Zesto, Tang, "
+        "Datu Puti, Silver Swan, UFC, Magic Sarap, Knorr, Maggi, Ajinomoto, Del Monte, Century Tuna, "
+        "555, Ligo, Argentina, Safeguard, Palmolive, Head & Shoulders, Pantene, Sunsilk, Creamsilk, "
+        "Colgate, Close Up, Tide, Surf, Ariel, Downy, Champion, Joy, Zonrox, Marlboro, Winston, Fortune, Hope. "
+        "${known.isNotEmpty ? 'THE STORE ALREADY SELLS THESE ITEMS (some have "also seen as" names):\n$known\n'
+            'If the product matches one of them (same brand, variant, and size), return that item\'s MAIN name exactly as written, '
+            'without the text in parentheses, and set matchedExisting to true. ' : ''}"
+        "If it does not match any, set matchedExisting to false and write a new name as: Brand Product Variant Size "
+        "(example: 'Lucky Me Pancit Canton Chilimansi 60g'), reading the text printed on the package. "
+        "Return ONLY JSON with keys: "
+        "itemName (string, empty if you truly cannot tell), "
+        "matchedExisting (boolean), "
+        "confidence (number 0 to 1), "
+        "category (one of: Canned Goods & Staples, Snacks & Treats, Beverages & Drinks, Condiments & Sauces, "
+        "Personal Care & Hygiene, Household & Cleaning Supplies, Cigarettes & Tobacco), "
+        "estimatedPrice (typical Philippine retail price per piece in PHP as a numeric string, or empty string if unknown). "
+        "Never invent a brand you cannot read or recognize.";
+
+    try {
+      final bytes = await imageFile.readAsBytes();
+      final text = await _generate(
+        systemInstruction: sysInstruct,
+        parts: [
+          {'text': 'What product is this?'},
+          {
+            'inline_data': {
+              'mime_type': 'image/jpeg',
+              'data': base64Encode(bytes),
+            }
+          },
+        ],
+        jsonOutput: true,
+        temperature: 0.1,
+      );
+      if (text == null) return null;
+
+      final cleaned = text.replaceAll(RegExp(r'```json|```'), '').trim();
+      var decoded = jsonDecode(cleaned);
+      if (decoded is List && decoded.isNotEmpty) decoded = decoded.first;
+      if (decoded is! Map) return null;
+
+      final result = Map<String, dynamic>.from(decoded);
+
+      // Safety: remove "(also seen as: ...)" if the model copied it into the name.
+      final name = (result['itemName'] ?? '').toString();
+      result['itemName'] =
+          name.replaceAll(RegExp(r'\s*\(also seen as:.*$', caseSensitive: false), '').trim();
+
+      return result;
+    } on AIException catch (e) {
+      debugPrint('Vision failed: $e');
+      return {'error': e.kind};
+    } catch (e) {
+      debugPrint('Vision failed: $e');
+      return {'error': 'OTHER'};
+    }
   }
-}
 
   // ---------------------------------------------------------------------------
   // 2. Business insight (dashboard / analytics)
